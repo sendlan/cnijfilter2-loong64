@@ -1,0 +1,4 @@
+{
+  global: CNNET2_*;
+  local: *;
+};

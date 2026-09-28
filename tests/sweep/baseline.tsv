@@ -1,0 +1,74 @@
+# cnijfilter2 回归基线 —— 组合 → 归一化输出长度 + SHA-256 前 16 位
+# 来源：上游 6.90 官方实现与原生实现对同一批输入的逐字节比对（全部一致）。
+# 此处只固化**派生数据**（归一化后的输出长度与摘要），不含任何上游内容。
+# 内容指纹见末行 `# integrity sha256:...`（不含该行本身）；变更历史与重算
+# 要求见同目录 BASELINE-LOG.md（append-only，改基线必须登记理由）。
+#
+# kind	value	outlen	sha16	opts
+PageSize	Letter	12218	d0b95424ee2ea12e	PageSize=Letter Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	Letter.bl	12947	667b3a1d99ee2eab	PageSize=Letter.bl Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	legal	13249	bfdaff5eb6035e1b	PageSize=legal Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	A5	9266	138c2ac55d5098ce	PageSize=A5 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	A4	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	A4.bl	13099	32cc5c7eb639d69c	PageSize=A4.bl Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	A3	12483	9c769d2028cc41b2	PageSize=A3 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	A3.bl	12483	9c769d2028cc41b2	PageSize=A3.bl Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	a3plus	12483	9c769d2028cc41b2	PageSize=a3plus Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	a6	12483	9c769d2028cc41b2	PageSize=a6 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	B5	10866	30c9c0ccc3f87fe8	PageSize=B5 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	B5.bl	12483	9c769d2028cc41b2	PageSize=B5.bl Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	B4	12483	9c769d2028cc41b2	PageSize=B4 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	oficio	12483	9c769d2028cc41b2	PageSize=oficio Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	foolscap	12483	9c769d2028cc41b2	PageSize=foolscap Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	4x6	7172	808e2e5d6f265bc4	PageSize=4x6 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	4x6.bl	7726	0dc0eb421bcedbc8	PageSize=4x6.bl Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	5x7in	8186	1160b4abc37f6439	PageSize=5x7in Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	5x7in.bl	8606	6a0712fe304c0260	PageSize=5x7in.bl Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	8x10	11515	7c0819ad216ff70f	PageSize=8x10 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	8x10.bl	12232	4c1f3492391d969a	PageSize=8x10.bl Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	10x12	12483	9c769d2028cc41b2	PageSize=10x12 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	7x10	12483	9c769d2028cc41b2	PageSize=7x10 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	l	6284	350c764499ba8a47	PageSize=l Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	l.bl	7093	e39638ee7fe9075b	PageSize=l.bl Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	2l	12483	9c769d2028cc41b2	PageSize=2l Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	Postcard	7077	7633b3689a1f58e3	PageSize=Postcard Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	Postcard.bl	7728	e259e91125a9fce4	PageSize=Postcard.bl Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	envelop10p	7688	d4d6798c3b67d640	PageSize=envelop10p Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	envelopdlp	7872	ba75552319040d20	PageSize=envelopdlp Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	businesscard	5171	a219d7192877531c	PageSize=businesscard Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	businesscard.bl	5606	b1fe61f1373112a5	PageSize=businesscard.bl Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	square89	12483	9c769d2028cc41b2	PageSize=square89 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	square4in	12483	9c769d2028cc41b2	PageSize=square4in Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	square127	7142	b34537fff224a060	PageSize=square127 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	square127.bl	8099	841c86d8c170cb2a	PageSize=square127.bl Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+PageSize	square12in	12483	9c769d2028cc41b2	PageSize=square12in Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+MediaType	plain	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+MediaType	glossygold	12498	95da1e5167e1776d	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=glossygold Duplex=None CNGrayscale=False
+MediaType	photopaperpro2	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=photopaperpro2 Duplex=None CNGrayscale=False
+MediaType	proplatinum	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=proplatinum Duplex=None CNGrayscale=False
+MediaType	procrystalgrade	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=procrystalgrade Duplex=None CNGrayscale=False
+MediaType	photopaperpro	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=photopaperpro Duplex=None CNGrayscale=False
+MediaType	superphoto	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=superphoto Duplex=None CNGrayscale=False
+MediaType	luster	12499	bef4e7c22a9388da	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=luster Duplex=None CNGrayscale=False
+MediaType	semigloss	12498	5eda7a3067b9261c	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=semigloss Duplex=None CNGrayscale=False
+MediaType	glossypaper	12499	32deb91c30b784c9	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=glossypaper Duplex=None CNGrayscale=False
+MediaType	matte	12499	6bead2ee304df7e8	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=matte Duplex=None CNGrayscale=False
+MediaType	photopaper	12485	7002433d7bf4c53e	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=photopaper Duplex=None CNGrayscale=False
+MediaType	envelope	12499	ce26133fd9ee870d	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=envelope Duplex=None CNGrayscale=False
+MediaType	ijpostcard	12499	4c5c814ad145358b	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=ijpostcard Duplex=None CNGrayscale=False
+MediaType	postcard	12499	7c0ecb23a183a27a	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=postcard Duplex=None CNGrayscale=False
+MediaType	label	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=label Duplex=None CNGrayscale=False
+MediaType	highres	12498	ee3e0f0da7528f79	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=highres Duplex=None CNGrayscale=False
+MediaType	photo	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=photo Duplex=None CNGrayscale=False
+MediaType	greetingcard	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=greetingcard Duplex=None CNGrayscale=False
+MediaType	cardstock	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=cardstock Duplex=None CNGrayscale=False
+Color	rgb/False	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+Color	rgb/True	12488	5a6585c4420a90a3	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=True
+Color	gray/False	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=gray MediaType=plain Duplex=None CNGrayscale=False
+Color	gray/True	12488	5a6585c4420a90a3	PageSize=A4 Resolution=300dpi ColorModel=gray MediaType=plain Duplex=None CNGrayscale=True
+Duplex	None	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+Duplex	DuplexTumble	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=DuplexTumble CNGrayscale=False
+Duplex	DuplexNoTumble	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=DuplexNoTumble CNGrayscale=False
+Borderless	A4	12483	9c769d2028cc41b2	PageSize=A4 Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+Borderless	A4.bl	13099	32cc5c7eb639d69c	PageSize=A4.bl Resolution=300dpi ColorModel=rgb MediaType=plain Duplex=None CNGrayscale=False
+# integrity sha256:a0101be22d1aad396444c8380ad01873dc0598199c16201eab5fae4f14c7c2a5

@@ -1,0 +1,120 @@
+# ── 构建中间物：跑一次 make-deb.sh 就全部重新生成，不入库 ──────────
+build/dist/
+build/logs/
+stage/
+*.o
+*.lo
+__pycache__/
+
+# ── autotools 就地编译生成物 ────────────────────────────────────
+#   源码树已在仓库根，旧式 autotools 会就地生成这些；本仓库索引里只有
+#   Makefile.am / configure.in 等**源文件**，故以下规则零误伤。
+#   正规做法是在副本里编（见 README「构建与打包」）。
+configure
+config.log
+config.status
+config.h
+config.h.in
+aclocal.m4
+ltmain.sh
+autom4te.cache/
+stamp-h1
+stamp-h.in
+Makefile
+Makefile.in
+.deps/
+.libs/
+*.a
+*.la
+
+#   libtoolize / `automake --add-missing` 生成的辅助脚本（原厂源码包不带，
+#   每次编译都会重新生成；autogen.sh 缺的正是这些）
+compile
+depcomp
+install-sh
+missing
+mkinstalldirs
+ar-lib
+test-driver
+ylwrap
+py-compile
+config.guess
+config.sub
+libtool
+#   libtoolize 放宏的 m4/ 目录（含 libtool.m4 / lt*.m4）。
+#   注意：写成 `m4/libtool.m4` 这类**含分隔符**的模式会被锚定到仓库根，
+#   匹配不到 `lgmon3/m4/`；用非锚定的目录模式才对。
+m4/
+
+#   autoconf 2.7x 的 config.status 临时物：confXXXXXX 及其 .dir/.file/subs.*
+#   ⚠️ 必须用 `conf[0-9]*`（后接数字）而不是 `conf??????*`（六字符通配）：
+#     后者会把 `config.guess` / `config.sub` / `config.h.in` / `config.status`
+#     这类**正常生成物**一并忽略（`config` 正好 6 字符 + 后续任意）。旧写法
+#     即有此误伤，虽未造成损失（那些文件本就该忽略），但规则语义不精确。
+conf[0-9]*
+conftest*
+/*/out/
+
+#   autopoint 的工作区：它在**当前目录**建 tmpwrk<PID>/，用完应自删；
+#   被中断时会残留，且 `archive/` 下是 gettext 模板副本（与 po/ 内容重复）。
+#   见 build-one.sh 的清理段。
+tmpwrk[0-9]*
+
+#   autopoint 还会把 config.rpath 放进 auxdir（/usr/bin/autopoint 第 669 行）。
+#   原厂源码包不带它，属构建期生成物。早先被 `conf??????*` 顺带忽略，
+#   改用 `conf[0-9]*` 后需显式列出。
+config.rpath
+
+#   gettext 生成物（POTFILES 由 POTFILES.in 生成，.gmo 由 msgfmt 生成）
+POTFILES
+*.gmo
+
+#   模块源码树里就地编出的可执行文件。
+#   ⚠️ 这里必须写**完整路径**：用裸名（如 `tocanonij`）会把同名的模块目录
+#   整个忽略掉 —— 当初就踩过。
+tocanonij/src/tocanonij
+tocnpwg/src/tocnpwg
+cnijbe2/src/cnijbe2
+rastertocanonij/src/rastertocanonij
+cmdtocanonij2/filter/cmdtocanonij2
+cmdtocanonij3/filter/cmdtocanonij3
+
+# 回归测试产物（跑 tests/sweep/*.py 时生成，结果可复算）
+tests/sweep/regress/
+tests/sweep/*.bin
+tests/sweep/*.err
+tests/sweep/*.log
+tests/sweep/table.tsv
+tests/sweep/sweep.progress
+tests/sweep/*.txt
+
+# ── 沙箱化 agent 环境构建时可能落在仓库根的一次性残留 ──────────────
+#   在带「安全删除」垫片的环境（如 WorkBuddy 沙箱）里跑构建时，
+#   外层会先做一遍删除重放，个别情况下把 configure/config.status 的
+#   中间物落到「工作区根」而不是模块目录里。均为可安全删除的临时物，
+#   普通 shell 下不会出现。这里用**根锚定**规则，避免误伤
+#   lgmon3/po/（那是真实源文件目录）。
+/confcache
+/conf[0-9]*
+/conftest*
+/po/
+/out/
+/a.out
+
+# ── 原厂材料：不入库、不随仓库分发 ──────────────────────────────
+#   含原厂闭源件与 Canon 自有许可内容，备份在 ~/文档/ cnijfilter2*
+cnijfilter2_6.90-1_loong64.deb
+cnijfilter2-*-deb.tar.gz
+cnijfilter2-source-*.tar.gz
+#   防御性：原厂闭源预编译库与官方回归比对基准也已移出，万一拷回来
+#   不应被误提交（保持全仓零非 LoongArch）。下面第三行是那个已移出
+#   基准目录的名字 —— 保留它只是为了让「拷回来」这件事不会静默入库，
+#   它不代表仓库依赖任何非 LoongArch 内容。
+com/libs_bin_*/
+lgmon3/src/cnijlgmon3
+tests/x86ref-*/
+
+# 编辑器临时文件
+*.kate-swp
+*.swp
+*~

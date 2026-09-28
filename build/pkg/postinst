@@ -1,0 +1,187 @@
+#!/bin/sh
+# ==================================================================
+#  cnijfilter2 —— 安装后配置（全原生 LoongArch64）
+#
+#  为什么要做目录探测：
+#    各发行版的 CUPS 安装布局并不统一。上游 Canon 的做法是给每个发行版
+#    单独出一个包、把路径写死；本包改成「按 Debian 通用位置安装 + 运行时
+#    探测」——
+#        * 文件实体统一装在 /usr/lib/cups/{filter,backend} 与
+#          /usr/share/cups/model（dpkg 体系下最常见）
+#        * 装完后探测本机 CUPS 真正生效的 ServerBin / DataDir；
+#          若与本包位置不同，就在探测到的目录里补建符号链接
+#    这样同一个 deb 既能用于 /usr/lib/cups，也能用于 /usr/lib64/cups、
+#    /usr/libexec/cups、/usr/local/lib/cups 等布局，不做任何破坏性改动。
+#
+#  清理：postrm 会删除本脚本建立的链接，并清理 ld.so.conf.d 记录。
+# ==================================================================
+set -e
+
+PKG=cnijfilter2
+STAMP=/var/lib/$PKG
+LINKS=/var/lib/$PKG/extra-links
+LDCONF=/etc/ld.so.conf.d/cnijfilter2.conf
+
+# 本包内置文件的规范位置
+LIBDIR=/usr/lib/loongarch64-linux-gnu
+SRV_CANON=/usr/lib/cups
+FILTERDIR=$SRV_CANON/filter
+BACKENDDIR=$SRV_CANON/backend
+MODELDIR=/usr/share/cups/model
+
+FILTERS="rastertocanonij cmdtocanonij2 cmdtocanonij3"
+BACKENDS="cnijbe2"
+
+log() { echo "cnijfilter2: $*"; }
+
+# ------------------------------------------------------------------
+# 1. 探测 CUPS 的 ServerBin（filter / backend 的父目录）
+# ------------------------------------------------------------------
+detect_serverbin() {
+    # ① cups-config 最权威（由 libcups2-dev 提供，没有就跳过）
+    if command -v cups-config >/dev/null 2>&1; then
+        s="$(cups-config --serverbin 2>/dev/null || true)"
+        if [ -n "$s" ] && [ -d "$s/filter" ]; then
+            echo "$s"; return 0
+        fi
+    fi
+    # ② 常见布局：目录里同时有 filter/ 和 backend/ 才算数
+    for d in /usr/lib/cups /usr/lib64/cups /usr/libexec/cups \
+             /usr/local/lib/cups /usr/local/libexec/cups; do
+        if [ -d "$d/filter" ] && [ -d "$d/backend" ]; then
+            echo "$d"; return 0
+        fi
+    done
+    # ③ 再用 CUPS 自带的过滤/后端做一次指纹识别
+    for d in /usr/lib/cups /usr/lib64/cups /usr/libexec/cups \
+             /usr/local/lib/cups /usr/local/libexec/cups; do
+        if [ -e "$d/backend/ipp" ] || [ -e "$d/filter/cups-brf" ]; then
+            echo "$d"; return 0
+        fi
+    done
+    echo ""
+}
+
+# ------------------------------------------------------------------
+# 2. 探测 CUPS 的 DataDir（PPD 模板目录的父目录）
+# ------------------------------------------------------------------
+detect_datadir() {
+    if command -v cups-config >/dev/null 2>&1; then
+        d="$(cups-config --datadir 2>/dev/null || true)"
+        if [ -n "$d" ] && [ -d "$d/model" ]; then
+            echo "$d"; return 0
+        fi
+    fi
+    for d in /usr/share/cups /usr/local/share/cups /usr/share/cups-2; do
+        if [ -d "$d/model" ]; then
+            echo "$d"; return 0
+        fi
+    done
+    echo ""
+}
+
+# ------------------------------------------------------------------
+# 3. 安全建链：已有实体文件不动，已有正确链接不动
+# ------------------------------------------------------------------
+link_to() {   # link_to <要建的链接路径> <指向>
+    _t="$1"; _s="$2"
+    if [ -e "$_t" ] && [ ! -L "$_t" ]; then
+        log "跳过（已存在实体文件）$_t"
+        return 0
+    fi
+    if [ -L "$_t" ] && [ "$(readlink "$_t")" = "$_s" ]; then
+        return 0
+    fi
+    mkdir -p "$(dirname "$_t")"
+    if ln -sfn "$_s" "$_t"; then
+        # 记录清单供 postrm 清理；不整体截断，避免第二次 configure 丢掉旧记录
+        grep -qxF "$_t" "$LINKS" 2>/dev/null || echo "$_t" >> "$LINKS"
+        log "补建链接 $_t -> $_s"
+    fi
+}
+
+# ------------------------------------------------------------------
+# 4. 规范位置上的权限（CUPS 要求：filter 0755，backend 0700 仅 root）
+# ------------------------------------------------------------------
+set_perms() {
+    _root="$1"
+    [ -d "$_root/filter" ]   || return 0
+    for f in $FILTERS; do
+        [ -e "$_root/filter/$f" ] && chmod 755 "$_root/filter/$f" 2>/dev/null || true
+    done
+    for b in $BACKENDS; do
+        if [ -e "$_root/backend/$b" ]; then
+            chmod 700 "$_root/backend/$b" 2>/dev/null || true
+            chown root:root "$_root/backend/$b" 2>/dev/null || true
+        fi
+    done
+    for f in $FILTERS; do
+        [ -e "$_root/filter/$f" ] && chown root:root "$_root/filter/$f" 2>/dev/null || true
+    done
+}
+
+run_ldconfig() {
+    if [ -x /sbin/ldconfig ]; then /sbin/ldconfig
+    elif command -v ldconfig >/dev/null 2>&1; then ldconfig
+    fi
+}
+
+restart_cups() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl try-restart cups 2>/dev/null || true
+    elif [ -x /etc/init.d/cups ]; then
+        /etc/init.d/cups restart >/dev/null 2>&1 || true
+    fi
+}
+
+# ==================================================================
+#  主流程
+# ==================================================================
+mkdir -p "$STAMP"
+touch "$LINKS"
+
+log "规范位置: filter=$FILTERDIR backend=$BACKENDDIR ppd=$MODELDIR"
+
+set_perms "$SRV_CANON"
+
+SERVERBIN="$(detect_serverbin)"
+DATADIR="$(detect_datadir)"
+log "探测结果: ServerBin=${SERVERBIN:-未找到}  DataDir=${DATADIR:-未找到}"
+
+if [ -n "$SERVERBIN" ] && [ "$SERVERBIN" != "$SRV_CANON" ]; then
+    log "本机 CUPS 使用 $SERVERBIN，在那边补建链接"
+    for f in $FILTERS;  do link_to "$SERVERBIN/filter/$f"  "$FILTERDIR/$f"; done
+    for b in $BACKENDS; do link_to "$SERVERBIN/backend/$b" "$BACKENDDIR/$b"; done
+    set_perms "$SERVERBIN"
+else
+    log "本机 CUPS 使用 $SRV_CANON，无需补建链接"
+fi
+
+if [ -n "$DATADIR" ] && [ "$DATADIR" != "/usr/share/cups" ]; then
+    log "本机 CUPS PPD 目录为 $DATADIR/model，补建 PPD 链接"
+    for p in "$MODELDIR"/*.ppd; do
+        [ -e "$p" ] || continue
+        link_to "$DATADIR/model/$(basename "$p")" "$p"
+    done
+fi
+
+# ------------------------------------------------------------------
+# 私有共享库：正常情况下 /usr/lib/<三元组> 已在 ld.so 搜索路径里；
+# 万一没有（非 Debian 系布局、或 ldconfig 未收录），补一条 conf 兜底，
+# 免得 cnijbe2 / cnijlgmon3 报 "cannot open shared object file"。
+# ------------------------------------------------------------------
+run_ldconfig
+if ! ldconfig -p 2>/dev/null | grep -q 'libcnbpnet30\.so'; then
+    log "ld.so 未收录 $LIBDIR，写入 $LDCONF 兜底"
+    echo "$LIBDIR" > "$LDCONF"
+    run_ldconfig
+    if ldconfig -p 2>/dev/null | grep -q 'libcnbpnet30\.so'; then
+        log "已生效：libcnbpnet30.so 可被动态链接器找到"
+    else
+        log "警告：仍找不到 libcnbpnet30.so，网络/USB 打印可能失败"
+    fi
+fi
+
+restart_cups
+
+exit 0

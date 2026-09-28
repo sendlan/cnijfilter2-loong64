@@ -1,0 +1,300 @@
+--- 说明：本补丁为「官方 6.90 原版源码 → 本仓库工作树」的逐行差异。
+--- 生成方式：对每个列出的文件执行
+---   diff -u <官方 6.90 解包目录>/<path> <本仓库>/<path>
+--- 应用基准：cnijfilter2-source-6.90-1.tar.gz
+---   sha256 b60f88f59ec74ccdd109397fd2d9c006d5743cfc79dd16405e449ecec72efab2
+--- 用法：cd <官方 6.90 源码树> && patch -p1 < loong64-native.patch
+
+--- a/lgmon3/configure.in
++++ b/lgmon3/configure.in
+@@ -50,7 +50,15 @@
+ 
+ dnl Add the languages which your application supports here.
+ ALL_LINGUAS="ja de fr zh"
+-AM_GLIB_GNU_GETTEXT
++dnl 原上游用的是 AM_GLIB_GNU_GETTEXT，它在 glib-gettext.m4 里是 AU_DEFUN
++dnl （已废弃的兼容封装），自己不声明 gettext 版本，autopoint 0.23 会直接报
++dnl   "AM_GNU_GETTEXT without 'external' argument is no longer supported"
++dnl 而拒绝生成 po/Makefile.in.in，进而 config.status 报
++dnl   "cannot find input file: 'po/Makefile.in.in'"
++dnl 改用标准 gettext 宏并显式声明版本与 external 模式。
++dnl 注：官方 6.20 / 6.90 均为 AM_GLIB_GNU_GETTEXT。
++AM_GNU_GETTEXT_VERSION([0.23])
++AM_GNU_GETTEXT([external])
+ 
+ dnl Set PACKAGE_LOCALE_DIR in config.h.
+ if test "x${prefix}" = "xNONE"; then
+--- a/lgmon3/src/Makefile.am
++++ b/lgmon3/src/Makefile.am
+@@ -6,6 +6,12 @@
+ 
+ cnijlgmon3_SOURCES = cnijcomif.c cnijifusb.c cnijlgmon3.c cnijifnet.c keytext.c cnijifnet2.c cnijutil.c
+ 
+-CFLAGS = -O2 -Wall -I/usr/include/libusb-1.0 -I./common @XML2_CFLAGS@
++# -fcommon：本代码依赖 tentative definition 合并（GET_PROTOCOL 等全局变量在
++# cnijlgmon3.c 与 cnijifnet2.c 中各写了一次）。gcc 10 起默认 -fno-common，
++# 会导致链接期 "multiple definition of `GET_PROTOCOL'"。显式回到 -fcommon。
++# 注：官方 6.20/6.90 均无此开关（其目标发行版 gcc 较老，默认仍是 -fcommon）。
++CFLAGS = -O2 -Wall -fcommon -I/usr/include/libusb-1.0 -I./common @XML2_CFLAGS@
+ 
+-cnijlgmon3_LDADD = -ldl -lusb-1.0 -lcnnet2 -lxml2 -lcnbpcnclapicom2 -lcnbpnet30
++# 不再链接 -lxml2：keytext.c 已改为运行时 dlopen 探测 soname
++# （libxml2.so.2 / .so.16），硬链接会在 soname 分叉的发行版上加载失败。
++cnijlgmon3_LDADD = -ldl -lusb-1.0 -lcnnet2 -lcnbpcnclapicom2 -lcnbpnet30
+--- a/lgmon3/src/cnijifnet2.c
++++ b/lgmon3/src/cnijifnet2.c
+@@ -29,6 +29,7 @@
+ 
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <ctype.h>
+ #include <string.h>
+ #include <netdb.h>
+ #include <sys/types.h>
+@@ -515,31 +516,53 @@
+ 
+ 
+ /* CNNET2 Functions */
++/* MAC 规范化：去掉分隔符（- : 空格）并统一大写。
++ * 上层给出的 serial 书写形式并不唯一（6C-3C-7C-A0-51-CB、6c3c7ca051cb、
++ * 6C:3C:7C:A0:51:CB 都见过），而 network2dev[].macAddressStr_ 固定是
++ * xx-xx-xx-xx-xx-xx。统一规范化后再比较，避免仅因大小写/分隔符差异
++ * 就匹配失败（表现为「网络打印机找不到」）。
++ * 注：官方 6.90 仍是裸 strcmp，未做规范化。 */
++static void cn_norm_mac( const char *in, char *out, size_t cap )
++{
++	size_t j = 0;
++
++	if( out == NULL || cap == 0 ) return;
++	if( in == NULL ){ out[0] = '\0'; return; }
++
++	for( ; *in != '\0' && j + 1 < cap; in++ ){
++		if( *in == '-' || *in == ':' || *in == ' ' ) continue;
++		out[j++] = (char)toupper( (unsigned char)*in );
++	}
++	out[j] = '\0';
++}
++
+ CNNET3_ERROR CNIF_Network2_ResolveIPAddr(const char *macAddr)
+ {
+ 	int i;
+-	CNNET3_ERROR ret = CN_NET3_SUCCEEDED;
++	CNNET3_ERROR ret = CN_NET3_FAILED;
++	char want[64], have[64];
+ 
+ 	if( SearchSnmp() != CN_NET3_SUCCEEDED ){
+-		ret = CN_NET3_FAILED;
+ 		goto onErr1;
+ 	}
+ 
+-	// int arrayNum = sizeof(network2dev) / sizeof(NETWORK_DEV);
+-	i = 0;
++	cn_norm_mac( macAddr, want, sizeof(want) );
++
++	if( want[0] == '\0' ){
++		goto onErr1;
++	}
+ 
+-	while( strlen( network2dev[i].modelName_ ) != 0 ) {
+-		if( strcmp(macAddr, network2dev[i].macAddressStr_) == 0 ){
++	for( i = 0; i < NETWORK_DEV_MAX; i++ ){
++		if( strlen( network2dev[i].modelName_ ) == 0 ){
++			break;								/* 列表结尾 */
++		}
++		cn_norm_mac( network2dev[i].macAddressStr_, have, sizeof(have) );
++		if( strcmp( want, have ) == 0 ){
+ 			memcpy( ipAddr, network2dev[i].ipAddressStr_, LEN_IP_ADDR );
+ 
+ 			ret = CN_NET3_SUCCEEDED;
+ 			break;
+ 		}
+-		else{
+-			ret = CN_NET3_FAILED;
+-		}
+-
+-		i++;
+ 	}
+ 
+ onErr1:
+--- a/lgmon3/src/cnijutil.c
++++ b/lgmon3/src/cnijutil.c
+@@ -86,7 +86,14 @@
+ 	// char *buffer = NULL;
+ 	uint8_t *buffer = NULL;
+ 
+-	unsigned int bufferSize = 0;
++	/* 原版此处是 unsigned int：GetStringWithTagFromFile 失败时返回 -1，
++	 * 赋给 unsigned 变成 4294967295，下面 "<= 0" 的守卫失效，随后
++	 * for(i=2;i<bufferSize;i++) buffer[i] 会对 NULL 解引用 → SIGSEGV。
++	 * 实测：不设 PPD 环境变量直接运行 cnijlgmon3 即崩溃
++	 * （dmesg: SIGSEGV ... invalid read access from 0000000000000002）。
++	 * 改成有符号类型即可让原有守卫真正生效。
++	 * 注：官方 6.90 此处仍为 unsigned int，未修。 */
++	int bufferSize = 0;
+ 
+ 	bufferSize = GetStringWithTagFromFile(ppdFileName, CNCL_FILE_TAG_DEVICEID, 1, &buffer);
+ 
+--- a/lgmon3/src/common/libcnnet2_type.h
++++ b/lgmon3/src/common/libcnnet2_type.h
+@@ -48,7 +48,14 @@
+ } CNNET2_SETTING_FLAGS;
+ 
+ #ifndef __cplusplus
++/* C23 (gcc 15 默认 -std=gnu23) 起 bool 是关键字，不能再 typedef；
++ * 此处加版本判断，C23+ 直接用内置 bool（_Bool，仍为 1 字节，
++ * 与旧 char 版本 ABI 一致）。
++ * 原报错：error: 'bool' cannot be defined via 'typedef'
++ * 注：官方 6.90 未加此守卫。 */
++# if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 202311L
+ typedef char bool;
++# endif
+ #endif
+ 
+ typedef struct {
+--- a/lgmon3/src/keytext.c
++++ b/lgmon3/src/keytext.c
+@@ -35,9 +35,51 @@
+ #include <sys/types.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
+-#include <libxml/parser.h>	/* Ver.2.80 */
++#include <libxml/parser.h>	/* Ver.2.80 —— 仅用其类型定义（编译期），函数走运行时绑定 */
++#include <dlfcn.h>
+ #include <string.h>
+ 
++/* ------------------------------------------------------------------
++ *  libxml2 运行时兼容层（多发行版，2026-09-26）
++ *
++ *  为什么不直接链接 -lxml2：
++ *    libxml2 的 soname 在各发行版已经分叉 ——
++ *      Loongnix / Debian / Ubuntu : libxml2.so.2（2.9~2.12）
++ *      AOSC 13.3 / 新上游         : libxml2.so.16（2.14+）
++ *    硬编码任何一个都会让同一份二进制在另一边加载失败。
++ *
++ *  本文件只用到 4 个「跨代稳定」API：
++ *      xmlParseFile / xmlFreeDoc / xmlGetProp / xmlNodeGetContent
++ *  （已在 AOSC 的 libxml2.so.16 上用 nm 逐一核实存在；树结构的
++ *    children 字段偏移自 2.x 以来未变）。改为运行时按序 dlopen
++ *    探测，同一份二进制两端通用；全都找不到时优雅降级（返回 -1，
++ *    错误文案退化为 key 名），不影响打印数据通路。
++ *  注：官方 6.90 仍直接链接 -lxml2。
++ * ------------------------------------------------------------------ */
++static xmlDocPtr  (*p_xmlParseFile)(const char *);
++static void       (*p_xmlFreeDoc)(xmlDocPtr);
++static xmlChar *  (*p_xmlGetProp)(xmlNodePtr, const xmlChar *);
++static xmlChar *  (*p_xmlNodeGetContent)(xmlNodePtr);
++
++static int xml_bind(void)
++{
++	const char *cands[] = { "libxml2.so.2", "libxml2.so.16", "libxml2.so", NULL };
++	int i;
++
++	for( i = 0 ; cands[i] != NULL ; i++ ){
++		void *h = dlopen( cands[i], RTLD_LAZY );
++		if( h == NULL ) continue;
++		p_xmlParseFile      = (xmlDocPtr (*)(const char *))dlsym( h, "xmlParseFile" );
++		p_xmlFreeDoc        = (void (*)(xmlDocPtr))dlsym( h, "xmlFreeDoc" );
++		p_xmlGetProp        = (xmlChar *(*)(xmlNodePtr, const xmlChar *))dlsym( h, "xmlGetProp" );
++		p_xmlNodeGetContent = (xmlChar *(*)(xmlNodePtr))dlsym( h, "xmlNodeGetContent" );
++		if( p_xmlParseFile && p_xmlFreeDoc && p_xmlGetProp && p_xmlNodeGetContent )
++			return 0;
++		dlclose( h );
++	}
++	return -1;
++}
++
+ #include "keytext.h"
+ 
+ #define CNIJLGMON2_RESFILE "cnb_cnijlgmon2.res"
+@@ -216,8 +258,8 @@
+ 	if( !xmlnode->name )
+ 		return;
+ 
+-	key  = (char *)xmlGetProp(xmlnode,(const xmlChar *)"key");
+-	text = (char *)xmlNodeGetContent(xmlnode);
++	key  = (char *)p_xmlGetProp(xmlnode,(const xmlChar *)"key");
++	text = (char *)p_xmlNodeGetContent(xmlnode);
+ 
+ 	if( key != NULL && text != NULL )
+ 	{
+@@ -243,18 +285,20 @@
+ 	short result = -1;
+ 	xmlDocPtr doc;
+ 
+-	if( (doc = xmlParseFile(fname)) == NULL ) goto Err;
++	if( xml_bind() != 0 ) goto Err;
++
++	if( (doc = p_xmlParseFile(fname)) == NULL ) goto Err;
+ 
+ 	if( doc->xmlRootNode == NULL
+ 	 || doc->xmlRootNode->name == NULL )
+ 	 //|| g_strcasecmp((const gchar *)doc->xmlRootNode->name, "KeyTextList") != 0)
+ 	{
+-		xmlFreeDoc(doc);
++		p_xmlFreeDoc(doc);
+ 		goto Err;
+ 	}
+ 
+ 	ParseXMLDoc(doc, tree);
+-	xmlFreeDoc(doc);
++	p_xmlFreeDoc(doc);
+ 
+ 
+ 	result = 0;
+--- a/tocanonij/src/main.c
++++ b/tocanonij/src/main.c
+@@ -650,6 +650,13 @@
+ 		{ "uuid", required_argument, NULL, OPT_UUID }, 
+ 		{ "rotate180", required_argument, NULL, OPT_ROTATE180 },
+ 		{ "optimization", required_argument, NULL, OPT_OPTIMIZATION},
++		/* 别名：本仓库 ppd/ 里的 *%CNPpdToOptKey 直接下发 --media / --duplex
++		 * （见 ppd/canong3010.ppd 等），而官方 6.90 只认 --mediatype /
++		 * --duplexprint。不补这两个别名，MediaType / Duplex 选择会被
++		 * getopt_long 静默丢弃，选项根本不生效。
++		 * 注：官方 6.90 无此别名。 */
++		{ "media", required_argument, NULL, OPT_MEDIATYPE }, 
++		{ "duplex", required_argument, NULL, OPT_DUPLEXPRINT }, 
+ 		{ 0, 0, 0, 0 }, 
+ 	};
+ 	const char *p_ppd_name = getenv("PPD");
+--- a/tocnpwg/src/main.c
++++ b/tocnpwg/src/main.c
+@@ -84,7 +84,14 @@
+ 	OPT_DUPLEXPRINT,
+ 	OPT_COLORMODE,
+ 	OPT_ROTATE180,
+-	OPT_OPTIMIZATION
++	OPT_OPTIMIZATION,
++	/* rastertocanonij 会把 PPD 派生的全套选项原样拼进本模块命令行
++	 * （见其 main.c「Set tocnpwg option」：把 param_list 全量 strcat）。
++	 * 其中这几个本模块不需要解析 —— 纸张/介质/灰度实际由上游 CUPS 与
++	 * CNDATA 头传递。登记为已知（接受后忽略）以消除 getopt_long 的
++	 * "unrecognized option" 噪声。
++	 * 注：官方 6.90 与本仓库所用 PPD 不匹配，同样会报这些噪声。 */
++	OPT_IGNORE
+ };
+ 
+ static char *StringToLower ( char *src ) 
+@@ -781,6 +788,12 @@
+ 		{ "grayscale", required_argument, NULL, OPT_COLORMODE }, 
+ 		{ "rotate180", required_argument, NULL, OPT_ROTATE180 },
+ 		{ "optimization", required_argument, NULL, OPT_OPTIMIZATION},
++		/* 透传选项：rastertocanonij 会把 PPD 全量选项拼进来，本模块不处理 */
++		{ "uuid", no_argument, NULL, OPT_IGNORE }, 
++		{ "jobid", required_argument, NULL, OPT_IGNORE }, 
++		{ "media", required_argument, NULL, OPT_IGNORE }, 
++		{ "papersize", required_argument, NULL, OPT_IGNORE }, 
++		{ "filterpath", required_argument, NULL, OPT_IGNORE }, 
+ 		{ 0, 0, 0, 0 }, 
+ 	};
+ 	int isPWGExist;
+@@ -831,6 +844,9 @@
+ 					optimization = 1;
+ 				}
+ 				break;
++			case OPT_IGNORE:
++				/* 透传选项，本模块不处理（见 enum 注释） */
++				break;
+ 		}
+ 	}
+ 	

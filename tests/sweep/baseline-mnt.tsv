@@ -1,0 +1,11 @@
+# cnijfilter2 维护路径回归基线 —— 作业 → 归一化输出长度 + SHA-256 前 16 位
+# 来源：上游 6.90 官方实现与原生实现对同一批输入的逐字节比对（全部一致）。
+# 此处只固化**派生数据**（归一化后的输出长度与摘要），不含任何上游内容。
+# 内容指纹见末行 `# integrity sha256:...`（不含该行本身）；变更历史与重算
+# 要求见同目录 BASELINE-LOG.md（append-only，改基线必须登记理由）。
+#
+# job	outlen	sha16	utl
+cleaning	1544	56e62fada1904de7	cleaning.utl
+nozzlecheck	1516	ad22804aa21b24ba	nozzlecheck.utl
+autoalign	1521	50bdd8aa9207de6a	autoalign.utl
+# integrity sha256:16ccdc72f387ef92aefae8416a4af43e0b06f4f164c8d0288c97d312d7a5be3c

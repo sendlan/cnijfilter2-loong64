@@ -1,0 +1,33 @@
+Package: cnijfilter2
+Version: 6.90-6loong64
+Architecture: loong64
+Maintainer: atree <local>
+Depends: cups, libcups2t64 | libcups2, libcupsimage2t64 | libcupsimage2, libc6 (>= 2.17), libgcc-s1, libusb-1.0-0
+Recommends: cups-filters, libxml2
+Suggests: system-config-printer
+Section: utils
+Priority: optional
+Homepage: https://www.canon.com
+Description: Canon IJ Printer Driver for LoongArch64 (fully native)
+ Canon IJ printer driver (cnijfilter2 6.90) rebuilt from source as 100%
+ native LoongArch64 binaries. No emulation layer and no wrapper scripts
+ are used anywhere in the package.
+ .
+ Provides the CUPS backend cnijbe2 (USB + network transport), the
+ rastertocanonij / cmdtocanonij2 / cmdtocanonij3 filters, the cnijlgmon3
+ ink-level / status monitor and PPD files for the PIXMA G3000 / G3010 /
+ G3020 / G3060 / G3080 series and many other supported Canon inkjet
+ models. Maintenance functions (cleaning, nozzle check, print head
+ alignment) are driven through the CUPS command interface.
+ .
+ Both transports are verified on real hardware: print data is sent as
+ IVEC over TCP 9100 (RAW), while status / control uses Canon's CHMP
+ (HTTP management protocol: POST to submit, then GET to fetch the
+ chunked response body). Printer discovery uses SNMP v1 with the Canon
+ private MIB (enterprise 1602) over unicast.
+ .
+ The package installs its files in the Debian-common CUPS locations and,
+ at post-install time, probes the CUPS directories that are actually
+ active on the host (cups-config, then well-known fallbacks) and adds
+ symlinks when they differ, so the same .deb also works on layouts such
+ as /usr/lib64/cups or /usr/libexec/cups.

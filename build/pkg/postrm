@@ -1,0 +1,61 @@
+#!/bin/sh
+# ==================================================================
+#  cnijfilter2 —— 卸载 / 清除
+#  只清理本包 postinst 自己建立的东西：
+#    * 非规范 CUPS 目录里的补充符号链接（清单在 /var/lib/cnijfilter2/extra-links）
+#    * /etc/ld.so.conf.d/cnijfilter2.conf 兜底记录
+#  规范位置（/usr/lib/cups/*、/usr/share/cups/model/*、私有库）由 dpkg 负责删。
+# ==================================================================
+set -e
+
+PKG=cnijfilter2
+STAMP=/var/lib/$PKG
+LINKS=$STAMP/extra-links
+LDCONF=/etc/ld.so.conf.d/cnijfilter2.conf
+
+run_ldconfig() {
+    if [ -x /sbin/ldconfig ]; then /sbin/ldconfig
+    elif command -v ldconfig >/dev/null 2>&1; then ldconfig
+    fi
+}
+
+restart_cups() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl try-restart cups 2>/dev/null || true
+    elif [ -x /etc/init.d/cups ]; then
+        /etc/init.d/cups restart >/dev/null 2>&1 || true
+    fi
+}
+
+remove_extra_links() {
+    [ -f "$LINKS" ] || return 0
+    while IFS= read -r t; do
+        [ -n "$t" ] || continue
+        if [ -L "$t" ]; then
+            rm -f "$t" && echo "cnijfilter2: 移除链接 $t"
+        fi
+    done < "$LINKS"
+    rm -f "$LINKS"
+}
+
+case "$1" in
+    remove|purge)
+        remove_extra_links
+        if [ -f "$LDCONF" ]; then
+            rm -f "$LDCONF"
+            echo "cnijfilter2: 移除 $LDCONF"
+        fi
+        run_ldconfig
+        restart_cups
+        ;;
+    upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        : ;;
+    *)
+        : ;;
+esac
+
+if [ "$1" = "purge" ]; then
+    rm -rf "$STAMP"
+fi
+
+exit 0
