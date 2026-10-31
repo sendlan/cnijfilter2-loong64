@@ -11,7 +11,7 @@ directory outside itself.
 | Target | Loongnix 25 / LoongArch 3A6000 (also usable on other loong64 distros) |
 | Upstream source | Canon `cnijfilter2` 6.90-1 (`cnijfilter2-source-6.90-1.tar.gz`) |
 | Behavioral target | Official 6.90 runtime behavior, byte for byte |
-| Artifact | `packages/cnijfilter2_6.90-6_loong64.deb` (180 KB) |
+| Artifact | `packages/cnijfilter2_6.90-6_all.deb` (180 KB) — `Architecture: all`, one package installs on both `loong64` (Debian/Loongnix) and `loongarch64` (AOSC) |
 | License | GPL-2 (upstream source and PPDs are GPL-2; our changes are GPL-2.0-or-later) |
 
 The **7 factory modules** (`lgmon3` `tocanonij` `tocnpwg` `cnijbe2`
@@ -33,8 +33,24 @@ sudo apt install --yes gcc make autoconf automake libtool pkg-config \
      libcups2-dev libcupsimage2-dev libusb-1.0-0-dev libxml2-dev
 
 bash build/build-all.sh                                    # build all 11 artifacts
-bash build/make-deb.sh                                     # → packages/
+bash build/make-deb.sh                                     # → packages/ (a single "all" package)
 echo <password> | sudo -S -p '' -E apt install --yes ./packages/*.deb
+```
+
+**One package covers both architecture names.** `loong64` (Debian / Loongnix /
+deepin) and `loongarch64` (AOSC) denote the very same set of LoongArch 64-bit
+binaries; only the dpkg `Architecture:` field differs. So this repository emits a
+single `Architecture: all` package that installs on both, instead of recompiling
+for each name. A `preinst` guard rejects non-LoongArch hosts before
+dpkg unpacks anything.
+
+If you really need per-arch packages (some archives demand a real arch name),
+one build can emit several:
+
+```bash
+ARCHS="loong64 loongarch64" bash build/make-deb.sh   # two per-arch packages
+ARCH=loong64                bash build/make-deb.sh   # loong64 only
+DEPS="cups, libcups2, libc6" bash build/make-deb.sh  # override Depends
 ```
 
 Build a single module: `bash build/build-all.sh lgmon3`

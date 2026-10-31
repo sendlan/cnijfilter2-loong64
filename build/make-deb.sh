@@ -19,12 +19,39 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"            # build/
 PROJ="$(cd "$ROOT/.." && pwd)"                   # 仓库根（= 源码树，已上移不再套娃）
 PKGVER="${PKGVER:-6.90-6loong64}"
-REV="$(printf %s "$PKGVER" | sed 's/-*loong64$//')"   # 6.90-6loong64 -> 6.90-6
+REV="$(printf %s "$PKGVER" | sed 's/-*\(loong64\|loongarch64\)$//')"   # 6.90-6loong64 -> 6.90-6
 SRCROOT="${SRCROOT:-${CNIJ_WORK:-$PROJ}}"                # 源码树位置（= 仓库根，源码树已上移）
 PPDROOT="${PPDROOT:-$PROJ/ppd}"                  # 6.90 全量 PPD 就在原厂的 ppd/（GPL-2）
 PKGPOOL="$PROJ/packages"                         # 产物汇总处（唯一出包位置）
-OUT="${OUT:-$PKGPOOL/cnijfilter2_${REV}_loong64.deb}"
-mkdir -p "$(dirname "$OUT")"                     # 产物目录可能尚不存在（首次克隆/刚清过）
+mkdir -p "$PKGPOOL"                              # 产物目录可能尚不存在（首次克隆/刚清过）
+
+# ------------------------------------------------------------------
+#  架构名（dpkg Architecture 字段）
+#    loong64      —— Debian / Loongnix / deepin
+#    loongarch64  —— AOSC OS 等
+#  两者是同一套 LoongArch 二进制（uname -m 都是 loongarch64），差别只在
+#  deb 控制字段。所以**默认只出一个 Architecture: all 的包**，dpkg 在
+#  两种系统上都接受 —— 一份产物通吃，不必反复编译。
+#
+#    想要架构专包（严格发行版/仓库要求真架构名）：
+#        ARCHS="loong64 loongarch64" bash build/make-deb.sh
+#        ARCH=loong64                bash build/make-deb.sh
+#    依赖包名不同（非 Debian 系）时覆盖 Depends：
+#        DEPS="cups, libcups2, libc6" bash build/make-deb.sh
+# ------------------------------------------------------------------
+ARCHS="${ARCHS:-${ARCH:-all}}"
+DEPS="${DEPS:-}"
+
+# ------------------------------------------------------------------
+#  维护者署名：自动取当前 git 仓库的身份（user.name / user.email），也就是
+#  你的 GitHub 身份，保证打包元数据与提交作者一致、不会各处对不上。
+#  取不到时退回下面这组默认值；也可用 MAINTAINER=... 直接覆盖。
+# ------------------------------------------------------------------
+GIT_NAME="$(git -C "$PROJ" config user.name 2>/dev/null || true)"
+GIT_MAIL="$(git -C "$PROJ" config user.email 2>/dev/null || true)"
+MAINT_NAME="${MAINT_NAME:-${GIT_NAME:-sendlan}}"
+MAINT_MAIL="${MAINT_MAIL:-${GIT_MAIL:-sendlan@outlook.com}}"
+MAINTAINER="${MAINTAINER:-$MAINT_NAME <$MAINT_MAIL>}"
 
 DIST="$ROOT/dist"
 STAGE="$DIST/stage"
@@ -135,9 +162,11 @@ liblink libcnbpnet30.so.1       libcnbpnet30.so.1.0.0
 # ---- 2d) DEBIAN 控制区 ----
 say "3) DEBIAN 控制区"
 install -D -m 644 "$ROOT/pkg/control"      "$STAGE/DEBIAN/control"
+install -D -m 755 "$ROOT/pkg/preinst"      "$STAGE/DEBIAN/preinst"
 install -D -m 755 "$ROOT/pkg/postinst"     "$STAGE/DEBIAN/postinst"
 install -D -m 755 "$ROOT/pkg/postrm"       "$STAGE/DEBIAN/postrm"
 sed -i "s/^Version:.*/Version: $PKGVER/" "$STAGE/DEBIAN/control"
+sed -i "s/^Maintainer:.*/Maintainer: $MAINTAINER/" "$STAGE/DEBIAN/control"
 
 # ------------------------------------------------------------------
 say "4) 全量架构自检（包内不允许出现任何非 LoongArch 可执行文件）"
@@ -156,12 +185,25 @@ echo "  ELF 文件 $n 个，非 LoongArch $bad 个"
 [ "$bad" -eq 0 ] || die "包内存在非 LoongArch 可执行文件"
 
 # ------------------------------------------------------------------
-say "5) 打 deb"
-rm -f "$OUT"
-dpkg-deb --root-owner-group -Zxz -b "$STAGE" "$OUT" >/dev/null
-echo "  产物: $OUT"
-ls -la "$OUT"
-dpkg-deb -I "$OUT" | sed -n '1,20p'
+say "5) 打 deb（同一批构件，按架构名逐个出包）"
+narch=$(printf '%s\n' $ARCHS | grep -c .)
+made=""
+for a in $ARCHS; do
+    sed -i "s/^Architecture:.*/Architecture: $a/" "$STAGE/DEBIAN/control"
+    [ -n "$DEPS" ] && sed -i "s/^Depends:.*/Depends: $DEPS/" "$STAGE/DEBIAN/control"
+    if [ -n "${OUT:-}" ] && [ "$narch" -eq 1 ]; then
+        o="$OUT"
+    else
+        o="$PKGPOOL/cnijfilter2_${REV}_${a}.deb"
+    fi
+    rm -f "$o"
+    dpkg-deb --root-owner-group -Zxz -b "$STAGE" "$o" >/dev/null
+    printf '  %-12s -> %s\n' "$a" "$o"
+    made="$made $o"
+done
+for o in $made; do ls -la "$o"; done
+first="$(printf '%s' "$made" | awk '{print $1}')"
+dpkg-deb -I "$first" | sed -n '1,20p'
 
 # 中间物（stage 组装树）默认清掉，保持仓库干净；想留现场排查就加 --keep。
 if [ "${1:-}" = "--keep" ]; then

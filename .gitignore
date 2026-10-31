@@ -6,6 +6,15 @@ stage/
 *.lo
 __pycache__/
 
+# ── 构建产物：**一律不入库** ──────────────────────────────────────
+#   build/built/ 是 build-all.sh 的收集目录（11 个 ELF + 软链 + cnnet.ini），
+#   packages/ 是 make-deb.sh 的出品目录。二者都可由源码完整重算，
+#   推送到远程只会把仓库撑大、并让「源码仓库」混入二进制。
+#   需要出包时先本地编：
+#       bash build/build-all.sh && bash build/make-deb.sh
+build/built/
+/packages/
+
 # ── autotools 就地编译生成物 ────────────────────────────────────
 #   源码树已在仓库根，旧式 autotools 会就地生成这些；本仓库索引里只有
 #   Makefile.am / configure.in 等**源文件**，故以下规则零误伤。

@@ -10,7 +10,7 @@ Canon `cnijfilter2` 的 LoongArch 原生重建。仓库内没有任何非 LoongA
 | 目标平台 | Loongnix 25 / LoongArch 3A6000（亦可用于其它 loong64 发行版） |
 | 上游源码 | Canon `cnijfilter2` 6.90-1（`cnijfilter2-source-6.90-1.tar.gz`） |
 | 对齐目标 | 官方 6.90 的运行时行为（逐字节） |
-| 产物 | `packages/cnijfilter2_6.90-6_loong64.deb`（180 KB） |
+| 产物 | `packages/cnijfilter2_6.90-6_all.deb`（180 KB）—— `Architecture: all`，一份包在 `loong64`（Debian/Loongnix）与 `loongarch64`（AOSC）上都可安装 |
 | 许可 | GPL-2（上游源码与 PPD 均为 GPL-2；改动部分 GPL-2.0-or-later） |
 
 **7 个原厂模块**（`lgmon3` `tocanonij` `tocnpwg` `cnijbe2` `rastertocanonij`
@@ -31,12 +31,26 @@ sudo apt install --yes gcc make autoconf automake libtool pkg-config \
      libcups2-dev libcupsimage2-dev libusb-1.0-0-dev libxml2-dev
 
 bash build/build-all.sh                                    # 编 11 个构件
-bash build/make-deb.sh                                     # → packages/
+bash build/make-deb.sh                                     # → packages/（一个 all 包）
 echo <口令> | sudo -S -p '' -E apt install --yes ./packages/*.deb
 ```
 
+**一份包通吃两个架构名。** `loong64`（Debian / Loongnix / deepin）与
+`loongarch64`（AOSC）指向的是同一套 LoongArch 64 位二进制，差别只在 dpkg 的
+`Architecture:` 字段。所以本仓库默认只出一个 `Architecture: all` 的包，两个
+系统都能装，不必为两个名字反复编译、反复出包；包内 `preinst` 在解包前做架构
+自检，非 LoongArch 主机会被明确拒绝（dpkg 尚未展开任何文件）。
+
+确实需要架构专包（某些仓库要求真架构名）时，一次构建即可出多个：
+
+```bash
+ARCHS="loong64 loongarch64" bash build/make-deb.sh   # 出两个架构专包
+ARCH=loong64                bash build/make-deb.sh   # 只出 loong64
+DEPS="cups, libcups2, libc6" bash build/make-deb.sh  # 覆盖 Depends（非 Debian 系）
+```
+
 只想编一个模块：`bash build/build-all.sh lgmon3`
-只想出包（`build/built/` 已是快照）：`bash build/make-deb.sh`
+只改打包脚本时：`bash build/make-deb.sh`（需先跑过一次 `build/build-all.sh`）
 
 ---
 

@@ -1,0 +1,38 @@
+#!/bin/sh
+# ==================================================================
+#  cnijfilter2 —— 安装前架构自检
+#
+#  本包的 Architecture 字段是 all，目的是让同一份 deb 同时兼容
+#      loong64      —— Debian / Loongnix / deepin
+#      loongarch64  —— AOSC OS 等
+#  两个架构名（二者本就是同一套 LoongArch 64 位二进制，差别只在 dpkg
+#  控制字段）。这样不必为两个名字反复编译、反复出包。
+#
+#  代价：dpkg 认为 all 包与架构无关，其它架构上也会允许安装。
+#  所以这里在**解包之前**自己把住架构关：不是 LoongArch 64 位就拒绝，
+#  此时 dpkg 尚未展开任何文件，系统不留痕迹。
+# ==================================================================
+set -e
+
+MACH="$(uname -m 2>/dev/null || echo unknown)"
+
+# 注意：不同发行版/内核的 uname -m 可能返回 loongarch64，也可能返回 loong64，
+# 二者是同一套 LoongArch 64 位（lp64d）ABI，都必须放行。
+case "$MACH" in
+    loongarch64|loongarch64-*|loong64|loong64-*)
+        # LoongArch 64 位，放行
+        ;;
+    loongarch32|loongarch32-*)
+        echo "cnijfilter2: 本包是 LoongArch 64 位（lp64d）二进制，" >&2
+        echo "cnijfilter2: 不适用于 32 位 LoongArch（当前 $MACH），已拒绝安装。" >&2
+        exit 1
+        ;;
+    *)
+        echo "cnijfilter2: 本包只适用于 LoongArch 64 位（loong64 / loongarch64）。" >&2
+        echo "cnijfilter2: 当前机器架构为 '$MACH'，已拒绝安装，未做任何改动。" >&2
+        echo "cnijfilter2: 如需在其它架构上使用，请从源码重新编译。" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

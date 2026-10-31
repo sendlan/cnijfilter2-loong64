@@ -17,7 +17,7 @@ sudo apt install --yes gcc make autoconf automake libtool pkg-config \
 
 ```bash
 bash build/build-all.sh          # 11 个构件 → build/built/
-bash build/make-deb.sh           # → packages/cnijfilter2_6.90-6_loong64.deb
+bash build/make-deb.sh           # → packages/cnijfilter2_6.90-6_all.deb
 ```
 
 一步到位：`bash build/build-all.sh --deb`
@@ -43,12 +43,20 @@ bash build/build-one.sh lgmon3  LDFLAGS=-L"$PWD/build/built"
 `build-one.sh` 流程：清残留 → `aclocal/libtoolize/autoheader/automake/autoconf`
 → `configure` → `make -j6`。日志：`build/logs/build-<模块>.log`。
 
-## 直接出包（不重编）
+## 出包
 
-`build/built/` 已是编好的构件快照，克隆下来即可：
+`build/built/` 与 `packages/` **不入库**（见 `.gitignore`），克隆下来是纯源码，
+必须先编一次：
 
 ```bash
-bash build/make-deb.sh
+bash build/build-all.sh          # 编 11 个构件 → build/built/
+bash build/make-deb.sh           # 从 build/built/ 组装 → packages/*.deb
+```
+
+只改了打包脚本（`build/make-deb.sh` / `build/pkg/*`）时可跳过重编：
+
+```bash
+CNIJ_BUILT=/path/to/已有构件 bash build/make-deb.sh
 ```
 
 加 `--keep` 保留 `build/dist/stage/` 组装树。
@@ -89,10 +97,22 @@ bash build/make-deb.sh
 echo <口令> | sudo -S -p '' -E apt install --yes ./packages/*.deb
 ```
 
-## 版本号
+## 版本号与架构名
 
-`PKGVER` 可覆盖（默认 `6.90-6loong64`），`REV` 由 `sed 's/-*loong64$//'` 推出。
-**改版本时 `build/pkg/control` 与 `make-deb.sh` 的 `PKGVER` 两处要同步。**
+`PKGVER` 可覆盖（默认 `6.90-6loong64`），`REV` 由 `sed 's/-*\(loong64\|loongarch64\)$//'`
+推出。**改版本时 `build/pkg/control` 与 `make-deb.sh` 的 `PKGVER` 两处要同步。**
+
+`Architecture:` 默认是 **`all`**：`loong64`（Debian/Loongnix）与 `loongarch64`
+（AOSC）是同一套 LoongArch 二进制，出一个包就能两边装，省得反复编译。
+`build/pkg/preinst` 会在解包前做架构自检，非 LoongArch 主机被拒。
+
+要出架构专包（一次构建即可，不重编）：
+
+```bash
+ARCHS="loong64 loongarch64" bash build/make-deb.sh   # 两个架构专包
+ARCH=loong64                bash build/make-deb.sh   # 只出 loong64
+DEPS="cups, libcups2, libc6" bash build/make-deb.sh  # 覆盖 Depends（非 Debian 系包名）
+```
 
 ## 验证
 

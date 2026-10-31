@@ -1543,6 +1543,103 @@ int CNNET2_OptSetting(void *instance, int settingFlag, unsigned int settingInfo)
     }
     return CNNET2_ERROR_CODE_SUCCESS;
 }
+
+/* ================================================================== */
+/*  CNNET2_* 发现接口（cnijlgmon3 经 dlopen/dlsym 调用）              */
+/*  —— 2026-10-31 从 4a89c8f 原样恢复：f3bf401 在加 SNMP 唤醒时误删。 */
+/*  原型见原厂 GPL 头 lgmon3/src/common/libcnnet2.h                  */
+/* ================================================================== */
+int CNNET2_Search(void *instance, const char *ipv4Address,
+                         void *callback, void *arg)
+{
+    cnnet2_inst_t *in = (cnnet2_inst_t *)instance;
+    void (*cb)(void *, const tagSearchPrinterInfo *) = NULL;
+    static cn_canon_dev devs[16];
+    int n, i, tmo;
+
+    if (!in) return CNNET2_ERROR_CODE_PARAM;
+    if (callback) cb = (void (*)(void *, const tagSearchPrinterInfo *))callback;
+
+    tmo = in->disc_tmo_ms > 0 ? in->disc_tmo_ms : 2000;
+
+    if (ipv4Address && cn_valid_ipv4(ipv4Address)) {
+        char one[1][64];
+        snprintf(one[0], sizeof(one[0]), "%s", ipv4Address);
+        n = cn_snmp_probe_list(one, 1, devs, 16, tmo);
+    } else {
+        /* 单播扫描：广播路径会被 conntrack 防火墙拦截，详见 cn_snmp_discover 注释 */
+        n = cn_snmp_discover(devs, 16, tmo);
+    }
+    if (n < 0) return CNNET2_ERROR_CODE_SOCKET;
+
+    in->found = 0;
+    free(in->list);
+    in->list = NULL;
+    if (n <= 0) return 0;                       /* 未发现任何设备 */
+
+    in->list = (tagSearchPrinterInfo *)calloc((size_t)n, sizeof(tagSearchPrinterInfo));
+    if (!in->list) return CNNET2_ERROR_CODE_MEMORY;
+
+    for (i = 0; i < n; i++) {
+        const cn_canon_dev *d = &devs[i];
+        tagSearchPrinterInfo *e = &in->list[i];
+        const char *mdl = d->model[0] ? d->model : "series";
+
+        memset(e, 0, sizeof(*e));
+        e->nicIndex_ = i;
+        snprintf(e->ipAddressStr_, sizeof(e->ipAddressStr_), "%s", d->ip);
+        /* MacAddressStr_ 为 12 个十六进制字符、无分隔、大写；
+         * 上层 cnijifnet2.c 会重排成 xx-xx-xx-xx-xx-xx 的形式。 */
+        snprintf(e->MacAddressStr_, sizeof(e->MacAddressStr_), "%s", d->mac);
+        snprintf(e->serialNumberStr_, sizeof(e->serialNumberStr_), "%s", d->serial);
+        snprintf(e->modelName_, sizeof(e->modelName_), "%s", mdl);
+        /* deviceId_：上层 CNCL_GetProtocol() 从其中找 "IVEC" 来判定走 IVEC 协议。
+         * 真机完整 Device ID（IPP get-printer-attributes 实测）为
+         *   MFG:Canon;CMD:BJRaster3,NCCe,IVEC;SOJ:CHMP;MDL:G3010 series;
+         *   CLS:PRINTER;DES:Canon G3010 series;VER:2.000;...
+         * 这里按 SNMP 得到的型号重建同样的语义串；DES 字段供上层
+         * （cnijifnet2.c 的型号兜底解析）提取显示名。 */
+        snprintf(e->deviceId_, sizeof(e->deviceId_),
+                 "MFG:Canon;CMD:BJRaster3,NCCe,IVEC;SOJ:CHMP;MDL:%s;"
+                 "CLS:PRINTER;DES:Canon %s;", mdl, mdl);
+        e->currentConnectMode_ = d->conn_mode;
+        e->deviceType_         = d->dev_type;
+        e->isUnicast_          = 1;
+        e->isSameSegment_      = 1;
+        in->found++;
+        if (cb) cb(arg, e);
+    }
+    return in->found;
+}
+
+int CNNET2_SearchByIpv6(void *instance, const char *ipv6Address,
+                               void *callback, void *arg)
+{
+    (void)instance; (void)ipv6Address; (void)callback; (void)arg;
+    return 0;                                   /* IPv6 发现未实现：返回 0 台，不视为错误 */
+}
+
+void CNNET2_CancelSearch(void *instance) { (void)instance; }
+
+int CNNET2_EnumSearchInfo(void *instance, tagSearchPrinterInfo *out,
+                                 unsigned int *ioSize)
+{
+    cnnet2_inst_t *in = (cnnet2_inst_t *)instance;
+    unsigned int canHold, cnt, i;
+
+    if (!in || !out || !ioSize) return CNNET2_ERROR_CODE_PARAM;
+
+    canHold = *ioSize / (unsigned int)sizeof(tagSearchPrinterInfo);
+    cnt = (unsigned int)in->found;
+    if (cnt > canHold) cnt = canHold;
+
+    for (i = 0; i < cnt; i++) {
+        out[i] = in->list[i];
+    }
+    *ioSize = cnt * (unsigned int)sizeof(tagSearchPrinterInfo);
+    return CNNET2_ERROR_CODE_SUCCESS;
+}
+
 static void cn_snmp_wake_unicast(const char *ip)
 {
     uint8_t req[1024];
