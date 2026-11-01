@@ -1,9 +1,8 @@
 #!/bin/bash
 # ==================================================================
-#  verify-net-print.sh —— 网络打印通路实测（抓包取证）
+#  verify-net-print.sh —— 网络打印通路实测
 #
-#  再打一页并抓包，确认作业数据真的经 TCP 9100 到达打印机，
-#  而不是只写在 CUPS 队列里。
+#  打一页并 tcpdump 采样，确认作业数据真的经 TCP 9100 到达打印机。
 #
 #  ⚠️ 这是**在真实网络上跑的一次性诊断**：需要 root（tcpdump）、
 #     一张在线打印机与正确的网卡名。它不属于可离线复现的回归——
@@ -16,10 +15,10 @@
 #  可覆盖的环境变量：
 #     QUEUE         CUPS 队列名            （默认 G3010-net）
 #     PRINTER_IP    打印机 IP              （默认 192.168.1.84）
-#     IFACE         抓包网卡               （默认 enp2s0）
+#     IFACE         采样网卡               （默认 enp2s0）
 #     SRC_IP        本机发往打印机的源 IP  （默认从路由表推断）
 #     TESTPAGE      要打印的文本页文件     （默认自动生成一页）
-#     OUTDIR        抓包/日志输出目录      （默认 build/logs/，已被 .gitignore 忽略）
+#     OUTDIR        采样/日志输出目录      （默认 build/logs/，已被 .gitignore 忽略）
 #
 #  非交互环境（无 TTY）需要免密 sudo；本仓库**不内置任何口令**。
 #  如需从管道喂口令，请自行 export CNIJ_SUDO_PASS=<口令>，
@@ -46,7 +45,7 @@ sudox() {
     fi
 }
 
-# 源 IP：用于在抓包里区分「本机 → 打印机 9100」的载荷
+# 源 IP：用于在采样里区分「本机 → 打印机 9100」的载荷
 SRC_IP="${SRC_IP:-$(ip -4 route get "$PRINTER_IP" 2>/dev/null \
     | sed -n 's/.* src \([0-9][0-9.]*\).*/\1/p' | head -1)}"
 [ -n "$SRC_IP" ] || SRC_IP="<未知>"
@@ -57,7 +56,7 @@ if [ ! -f "$TESTPAGE" ]; then
 fi
 
 echo "队列=$QUEUE  打印机=$PRINTER_IP  网卡=$IFACE  源IP=$SRC_IP"
-echo "自检页=$TESTPAGE  抓包=$PKT"
+echo "自检页=$TESTPAGE  采样=$PKT"
 echo
 
 sudox rm -f "$PKT" 2>/dev/null

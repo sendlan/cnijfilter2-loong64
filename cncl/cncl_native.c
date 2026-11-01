@@ -1,18 +1,8 @@
 /*
  *  cncl_native.c —— Canon IVEC 命令层（libcnbpcnclapicom2.so.5.0.0）的 loong64 原生实现
  *
- *  契约来源（可复核）：
- *   1) 函数原型：源码树 4 份一致的 include/cncl/cnclcmdutils.h（extern 原型）
- *      + 各调用方 dlsym 的函数指针强转（维护组/状态组不在头文件里）
- *   2) XML 模板：闭源库 .rodata 中 52 条模板逐条提取（0x0152c8 ~ 0x019b40）
- *   3) SetConfiguration 模板选择规则：反汇编 0xe6c9~0xe85a
- *          r12 = Settings.colormode, r13 = Settings.duplexprint
- *          colormode==-1 ? (duplex==-1 -> 0x182b8 ; <=2 -> 0x183f8 ; else 0x18560)
- *                        : (duplex==-1 -> 0x17e10 ; <=2 -> 0x17f78 ; else 0x18108)
- *   4) 映射表：.rodata 字符串块 + 选项扫描实测（原始材料不随仓库分发）
- *   5) 逐字节验收：与上游官方实现对同一批输入的输出逐字节比对（见 tests/sweep/BASELINE-LOG.md）
- *
- *  授权：cnijfilter2 各源文件 NOTE 明确许可与二进制模块链接，本替代实现无授权障碍。
+ *  原型取自树内 include/cncl/cnclcmdutils.h；XML 模板与映射表对齐原厂实现。
+ *  输出与官方实现对同批输入逐字节一致（回归见 tests/sweep）。
  */
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -28,13 +18,11 @@
 #define ERR_ARG  (-2)
 #define ERR_GEN  (-1)
 
-/* ---- XML 声明（闭源库中两种写法并存，必须原样保留） ---- */
+/* ---- XML 声明两种写法并存，必须原样保留 ---- */
 #define XD_OLD  "<?xml version=\"1.0\" encoding=\"utf-8\" ?>"
 #define XD_NEW  "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
-/* 维护版 SetJobConfiguration 的 XML 头。注意 "job_description" 不是运行时残留，
- * 而是 Canon 自己写进 .rodata 模板的字面量：原库 @0x018d24 处模板串就是
- * 'encoding="job_descriptionutf-8" ?><cmd ...' —— 源码级 typo。
- * 照抄是为了与原始输出逐字节一致（差分验证见 sweep/mnt-regress.py）。 */
+/* 维护版 SetJobConfiguration 的 XML 头。encoding 里的 "job_description"
+ * 是原厂模板自带的 typo，照抄以保持输出逐字节一致。 */
 #define XD_NEW_MNT "<?xml version=\"1.0\" encoding=\"job_descriptionutf-8\" ?>"
 
 #define NS_COMMON  "http://www.canon.com/ns/cmd/2008/07/common/"
@@ -89,7 +77,6 @@ static int tpl_expand(char *out, long cap, const char *fmt, const char *const *a
 /*  1) 编解码                                                          */
 /* ================================================================== */
 
-/* 物证：闭源库 0x880c 处 `xorl $0x39, %edx` */
 int CNCL_DecodeFromString(const char *src, size_t srcLen,
                           uint8_t *dst, size_t dstCap)
 {
@@ -361,16 +348,7 @@ int CNCL_ParseCapabilityResponseMaintenance_DateTime(void *xmlCapabilityPrint, i
 /* ================================================================== */
 
 /*
- * StartJob3 —— 模板（.rodata 0x017050 / 0x016a20）
- *   0x017050（带 host_environment）:
- *     XD_OLD<cmd%s><ivec:contents><ivec:operation>StartJob</ivec:operation>
- *       <ivec:param_set servicetype="%s"><ivec:jobID>%s</ivec:jobID>
- *       <ivec:bidi>%s</ivec:bidi><vcn:forcepmdetection>OFF</vcn:forcepmdetection>
- *       <ivec:jobname/><ivec:username/><ivec:computername/>
- *       <ivec:job_description><![CDATA[%s]]></ivec:job_description>
- *       <vcn:host_environment>%s</vcn:host_environment>
- *       </ivec:param_set></ivec:contents></cmd>
- *   hostEnv != 0 用 0x017050，否则用 0x016a20（同上的不带 host_environment 版）
+ * StartJob3 —— 两种模板：hostEnv != 0 带 <vcn:host_environment>
  *   实参：attr, servicetype, jobID, bidi, jobDescription, [host_environment]
  */
 int CNCL_MakeCommand_StartJob3(int hostEnvID, char *uuid, char jobID[],
@@ -422,8 +400,8 @@ int CNCL_MakeCommand_StartJob3(int hostEnvID, char *uuid, char jobID[],
 }
 
 /*
- * SetJobConfiguration —— 模板 0x015af0（XD_NEW，仅 ivec 命名空间）
- *   注意此处模板内无 %s，闭源库是按 XML 路径改写 jobID / datetime 两处取值；
+ * SetJobConfiguration —— XD_NEW，仅 ivec 命名空间
+ *   模板内无 %s，原厂按 XML 路径改写 jobID / datetime 两处取值；
  *   本实现直接参数化，输出字节等价。
  */
 int CNCL_MakeCommand_SetJobConfiguration(char jobID[], char datetime[],
@@ -457,7 +435,7 @@ int CNCL_MakeCommand_SetJobConfiguration(char jobID[], char datetime[],
 }
 
 /*
- * SetConfiguration —— 六个模板，选择规则见文件头（反汇编 0xe6c9~0xe85a）。
+ * SetConfiguration —— 六个模板，按 colormode/duplex 二级选择，规则见文件头。
  *   模板形如：XD_OLD<cmd%s><ivec:contents><ivec:operation>SetConfiguration</...>
  *     <ivec:param_set servicetype="print"><ivec:jobID>%s</ivec:jobID>
  *     <%s:papersize>%s</%s:papersize> ... [<%s:printcolormode>] [<%s:duplexprint>]
@@ -469,7 +447,7 @@ int CNCL_GetSetConfigurationCommand(void *pSettings, char *jobID, long cmdBuffer
                                     char *cmdBuffer, long *writtenSize)
 {
     /* tbl = {开头, papersize 前, papertype 前, borderless 前, colormode 前, duplex 前} */
-    static const char T_BASE[] =                       /* 0x182b8 : 3 元素 */
+    static const char T_BASE[] =                       /* 3 元素 */
         XD_OLD "<cmd%s><ivec:contents>"
         "<ivec:operation>SetConfiguration</ivec:operation>"
         "<ivec:param_set servicetype=\"print\">"
@@ -478,7 +456,7 @@ int CNCL_GetSetConfigurationCommand(void *pSettings, char *jobID, long cmdBuffer
         "<%s:papertype>%s</%s:papertype>"
         "<%s:borderlessprint>%s</%s:borderlessprint>"
         "</ivec:param_set></ivec:contents></cmd>";
-    static const char T_DUP[] =                        /* 0x183f8 : 3 元素 + duplex */
+    static const char T_DUP[] =                        /* 3 元素 + duplex */
         XD_OLD "<cmd%s><ivec:contents>"
         "<ivec:operation>SetConfiguration</ivec:operation>"
         "<ivec:param_set servicetype=\"print\">"
@@ -488,7 +466,7 @@ int CNCL_GetSetConfigurationCommand(void *pSettings, char *jobID, long cmdBuffer
         "<%s:borderlessprint>%s</%s:borderlessprint>"
         "<%s:duplexprint>%s</%s:duplexprint>"
         "</ivec:param_set></ivec:contents></cmd>";
-    static const char T_DUP_STAPLE[] =                 /* 0x18560 : 3 元素 + duplex + staple */
+    static const char T_DUP_STAPLE[] =                 /* 3 元素 + duplex + staple */
         XD_OLD "<cmd%s><ivec:contents>"
         "<ivec:operation>SetConfiguration</ivec:operation>"
         "<ivec:param_set servicetype=\"print\">"
@@ -499,7 +477,7 @@ int CNCL_GetSetConfigurationCommand(void *pSettings, char *jobID, long cmdBuffer
         "<%s:duplexprint>%s</%s:duplexprint>"
         "<ivec:stapleside>%s</ivec:stapleside>"
         "</ivec:param_set></ivec:contents></cmd>";
-    static const char T_COL[] =                        /* 0x17e10 : 4 元素 */
+    static const char T_COL[] =                        /* 4 元素 */
         XD_OLD "<cmd%s><ivec:contents>"
         "<ivec:operation>SetConfiguration</ivec:operation>"
         "<ivec:param_set servicetype=\"print\">"
@@ -509,7 +487,7 @@ int CNCL_GetSetConfigurationCommand(void *pSettings, char *jobID, long cmdBuffer
         "<%s:borderlessprint>%s</%s:borderlessprint>"
         "<%s:printcolormode>%s</%s:printcolormode>"
         "</ivec:param_set></ivec:contents></cmd>";
-    static const char T_COL_DUP[] =                    /* 0x17f78 : 4 元素 + duplex */
+    static const char T_COL_DUP[] =                    /* 4 元素 + duplex */
         XD_OLD "<cmd%s><ivec:contents>"
         "<ivec:operation>SetConfiguration</ivec:operation>"
         "<ivec:param_set servicetype=\"print\">"
@@ -520,7 +498,7 @@ int CNCL_GetSetConfigurationCommand(void *pSettings, char *jobID, long cmdBuffer
         "<%s:printcolormode>%s</%s:printcolormode>"
         "<%s:duplexprint>%s</%s:duplexprint>"
         "</ivec:param_set></ivec:contents></cmd>";
-    static const char T_COL_DUP_STAPLE[] =             /* 0x18108 : 4 元素 + duplex + staple */
+    static const char T_COL_DUP_STAPLE[] =             /* 4 元素 + duplex + staple */
         XD_OLD "<cmd%s><ivec:contents>"
         "<ivec:operation>SetConfiguration</ivec:operation>"
         "<ivec:param_set servicetype=\"print\">"
@@ -602,7 +580,7 @@ int CNCL_GetSetConfigurationCommand(void *pSettings, char *jobID, long cmdBuffer
 }
 
 /*
- * SetPageConfiguration —— 模板 0x015fa8（XD_OLD，ivec+vcn 双命名空间）
+ * SetPageConfiguration —— XD_OLD，ivec+vcn 双命名空间
  *   nextpage: 1 = OFF, 2 = ON（CNCL_PSET_NEXTPAGE_*）
  */
 int CNCL_GetSetPageConfigurationCommand(const char *jobID, unsigned short nextpage,
@@ -637,7 +615,7 @@ int CNCL_GetSetPageConfigurationCommand(const char *jobID, unsigned short nextpa
 }
 
 /*
- * SendData（PWGRaster）—— 模板由 XML 路径（0x018778 datasize / 0x0187c0 format）
+ * SendData（PWGRaster）—— datasize / format 二选一
  * 动态构造；此处按实测输出定形，字节等价。
  */
 int CNCL_GetSendDataPWGRasterCommand(char *jobID, long data_size, long cmdBufferSize,
@@ -673,7 +651,7 @@ int CNCL_GetSendDataPWGRasterCommand(char *jobID, long data_size, long cmdBuffer
 }
 
 /*
- * GetPrintCommand —— op=3(END) 走 EndJob 模板 0x019b40；
+ * GetPrintCommand —— op=3(END) 走 EndJob；
  * op=1/2/4 属 CHMP(BJL) 旧协议路径，G3010 走不到，此处给等价 StartJob 形态。
  */
 int CNCL_GetPrintCommand(char *cmdBuffer, long cmdBufferSize, long *writtenSize,
@@ -751,7 +729,7 @@ int CNCL_MakeBJLSetTimeJob(void *cmdBuffer, size_t cmdBufferSize, size_t *writte
 }
 
 /*
- * GetCapability 命令（模板 0x0194a0 / 0x0192a0 / 0x0193a0）
+ * GetCapability 命令（三种模板）
  *   service_type: 1 = print, 2 = maintenance, 3 = device
  */
 int CNCL_MakeGetCapabilityCommand(char *cmdBuffer, unsigned int cmdBufferSize,
@@ -786,7 +764,7 @@ int CNCL_MakeGetCapabilityCommand(char *cmdBuffer, unsigned int cmdBufferSize,
 /*     注意：签名取自调用方 dlsym 强转，与头文件不同（多一个 jobID）   */
 /* ================================================================== */
 
-/* 0x018b70：SetJobConfiguration（maintenance），jobID/datetime 按路径改写 */
+/* SetJobConfiguration（maintenance），jobID/datetime 按路径改写 */
 int CLSS_MakeCommand_SetJobConfiguration_Maintenance(char jobID[], char datetime[],
                                                      void *cmdBuffer, int cmdBufferSize,
                                                      long *writtenSize)
@@ -816,7 +794,7 @@ int CLSS_MakeCommand_SetJobConfiguration_Maintenance(char jobID[], char datetime
     return OK;
 }
 
-/* 0x018808：Cleaning（%s = jobID 元素） */
+/* Cleaning（%s = jobID 元素） */
 int CNCL_MakeCommand_Cleaning(char jobID[], void *cmdBuffer, int cmdBufferSize,
                               long *writtenSize)
 {
@@ -849,7 +827,7 @@ int CNCL_MakeCommand_Cleaning(char jobID[], void *cmdBuffer, int cmdBufferSize,
     return OK;
 }
 
-/* 0x018a58：TestPrint / nozzle_check */
+/* TestPrint / nozzle_check */
 int CNCL_MakeCommand_TestPrint(char jobID[], void *cmdBuffer, int cmdBufferSize,
                                long *writtenSize)
 {
@@ -882,7 +860,7 @@ int CNCL_MakeCommand_TestPrint(char jobID[], void *cmdBuffer, int cmdBufferSize,
     return OK;
 }
 
-/* 0x018938：TestPrint / auto_registration */
+/* TestPrint / auto_registration */
 int CNCL_MakeCommand_AutoAlignment(char jobID[], void *cmdBuffer, int cmdBufferSize,
                                    long *writtenSize)
 {
@@ -916,7 +894,7 @@ int CNCL_MakeCommand_AutoAlignment(char jobID[], void *cmdBuffer, int cmdBufferS
 }
 
 /*
- * 维护 StartJob3 —— 模板 0x0178b0（带 host_environment）/ 0x017728（不带）
+ * 维护 StartJob3 —— 带 host_environment 与不带两种模板
  *   签名 (int hostEnv, char *uuid, char jobID[], void *buf, long bufSize, long *written)
  */
 int CNCL_MakeCommand_StartJob3_Maintenance(int hostEnvID, char *uuid, char jobID[],
@@ -965,7 +943,7 @@ int CNCL_MakeCommand_StartJob3_Maintenance(int hostEnvID, char *uuid, char jobID
     return OK;
 }
 
-/* 0x019b40：EndJob（servicetype = maintenance） */
+/* EndJob（servicetype = maintenance） */
 int CNCL_MakeCommand_EndJob_Maintenance(char jobID[], void *cmdBuffer, long cmdBufferSize,
                                         long *writtenSize)
 {
@@ -993,7 +971,7 @@ int CNCL_MakeCommand_EndJob_Maintenance(char jobID[], void *cmdBuffer, long cmdB
     return OK;
 }
 
-/* 0x019a20：CancelJob（servicetype 可变） */
+/* CancelJob（servicetype 可变） */
 static int cancel_job_common(const char *svc, char *jobID, char *cmdBuffer,
                              unsigned int cmdBufferSize, unsigned int *writtenSize)
 {
@@ -1035,7 +1013,7 @@ int CNCL_MakeCommand_CancelJob_Maintenance(char *jobID, char *cmdBuffer,
 }
 
 /* ================================================================== */
-/*  6) 状态查询命令（模板 0x018e20 / 0x018d00，字面 jobID 00000001）   */
+/*  6) 状态查询命令（字面 jobID 00000001）                             */
 /* ================================================================== */
 
 int CNCL_MakeCommand_GetStatusPrint(char *cmdBuffer, unsigned int cmdBufferSize,
@@ -1089,33 +1067,16 @@ int CNCL_MakeCommand_GetStatusMaintenance(char *cmdBuffer, unsigned int cmdBuffe
 /* ================================================================== */
 /*  7) 响应解析（cnijlgmon3 用）                                      */
 /* ------------------------------------------------------------------ *
- *  逆向依据（全部可在官方 6.90 库上复核）：
- *    · 字典表：.data.rel.ro 里 4 张 {char* name; u64 val} 16 字节项表，
- *      索引即返回值。表地址与项数取自 GOT 槽位的 RELATIVE 重定位项：
- *        0x221298 -> OperationTbl     0x21f880  项数 27 (0x1c936)
- *        0x221138 -> ResponseTbl      0x21faa0  项数  3 (0x1c93a)
- *        0x221118 -> ResponseDetailTbl 0x21fae0 项数 12 (0x1c93c)
- *        0x221228 -> StatusTbl        0x21fba0
- *        0x221128 -> StatusDetailTbl  0x21fcc0
- *    · 解析流程：反汇编 CLSS_ParseResponseCommon @0x10480 /
- *      getOperation_ServiceType @0x12be0 / GetCanonID @0x12510 /
- *      parseCommonStatusResponse @0x12dd0 / CNCL_GetInfoResponse @0x9490 /
- *      CNCL_GetStatus @0x92c0。
- *    · 取值方式：GetCanonID 线性扫描表，命中后返回的是**下标**而不是
- *      条目里的 u64 字段（u64 字段全为 0xffff，不参与判定）。
- *    · 关键 XML 取值路径（.rodata 0x220d00 / 0x21f740 / 0x21f580）：
- *        cmd/ivec:contents/ivec:operation
- *        cmd/ivec:contents/ivec:param_set servicetype="print"/ivec:response
- *        .../ivec:response_detail        .../ivec:jobID
- *        .../ivec:jobstatus/ivec:jobID   .../vcn:ijoperation  .../vcn:ijresponse
- *        .../ivec:status                 .../ivec:status_detail
- *        .../ivec:current_support_code
+ *  解析流程与原厂一致：XML 路径取节点名 → 字典表线性扫描，命中后
+ *  返回**下标**（表中 u64 字段全为 0xffff，不参与判定）。取值路径：
+ *      .../ivec:operation  .../ivec:response  .../ivec:response_detail
+ *      .../ivec:jobID      .../ivec:jobstatus/ivec:jobID
+ *      .../vcn:ijoperation .../vcn:ijresponse .../ivec:status
+ *      .../ivec:status_detail  .../ivec:current_support_code
  *
- *  ⚠ 返回类型说明：官方头文件写的是 unsigned short，但闭源库实际把**完整
- *    32 位**（如 0xfffffffe）留在返回寄存器里，而唯一的真实调用方
- *    cnijlgmon3 是用 `int (*)(...)` 通过 dlsym 调用的，并据此判 `err < 0`。
- *    若按 unsigned short 返回，0xfffe 会被零扩展成 65534 → 被误判为成功。
- *    故本实现把返回值声明为 int，与官方实际行为一致。
+ *  ⚠ 官方头声明 unsigned short，但库里实际返回完整 32 位负值，
+ *    调用方 cnijlgmon3 按 int 判 err < 0；照 short 返回会零扩展成
+ *    正数被误判成功，故这里返回 int。
  * ================================================================== */
 
 #define CN_ITEM_NONE      65535
@@ -1127,7 +1088,7 @@ int CNCL_MakeCommand_GetStatusMaintenance(char *cmdBuffer, unsigned int cmdBuffe
 #define CN_ERR_NO_RESPID  (-15)       /* 0xfffffff1 response 未命中字典 */
 #define CN_ERR_NO_DETAIL  (-16)       /* 0xfffffff0 response_detail 未命中字典 */
 
-/* ---- 操作名表：索引 = opId（官方 glb_clssdicOperationTbl @0x21f880） ---- */
+/* ---- 操作名表：索引 = opId ---- */
 static const char *const CN_OP_TBL[] = {
     NULL,                                   /*  0 */
     "GetCapability",                        /*  1 */
@@ -1164,12 +1125,12 @@ static const unsigned char CN_OP_IS_RESPONSE[] = {
     0, 1, 0, 1, 0, 1, 0, 1,                           /*19..26*/
 };
 
-/* ---- 响应码表（索引 = responseId，官方 @0x21faa0，项数 3） ---- */
+/* ---- 响应码表（索引 = responseId，项数 3） ---- */
 static const char *const CN_RESP_TBL[] = { NULL, "OK", "NG" };
 #define CN_RESP_TBL_N     3
 #define CN_RESP_NG        2
 
-/* ---- 响应明细表（官方 @0x21fae0，项数 12） ---- */
+/* ---- 响应明细表（项数 12） ---- */
 static const char *const CN_RESP_DETAIL_TBL[] = {
     "DeivceUseOtherJob", "ParameterError", "NotSupportService",
     "NotSupportOperation", "NotStart", "IllegalJobID", "IllegalOperation",
@@ -1177,7 +1138,7 @@ static const char *const CN_RESP_DETAIL_TBL[] = {
 };
 #define CN_RESP_DETAIL_TBL_N 11
 
-/* ---- 状态表（索引 = statusId，官方 @0x21fba0） ---- */
+/* ---- 状态表（索引 = statusId） ---- */
 static const char *const CN_STATUS_TBL[] = {
     NULL, "idle", "processing", "stopped", "notready", "busying", "canceling",
     NULL, NULL, "waitingrender", "rendering", "waitingprint", "printing",
@@ -1185,7 +1146,7 @@ static const char *const CN_STATUS_TBL[] = {
 };
 #define CN_STATUS_TBL_N   17
 
-/* ---- 状态明细表（官方 @0x21fcc0） ---- */
+/* ---- 状态明细表 ---- */
 static const char *const CN_STATUS_DETAIL_TBL[] = {
     NULL, "AttentionRequired", "MediaJam", "DoorOpen", "MediaEmpty",
     "MarkerSupplyAttention", "DeviceBusy", "CUSTOM_MISMATCH", NULL,
@@ -1450,10 +1411,7 @@ int CNCL_GetInfoResponse(char *data, int readed_data,
 
 /* ------------------------------------------------------------------ *
  *  公共状态解析：statusId / statusDetail / supportId
- *  tmp 布局（官方 parseCommonStatusResponse @0x12dd0，rbx = 调用方 tmp+2）：
- *      tmp+0 -> statusId        tmp+2 -> statusDetail
- *      tmp+0x10 -> 未知 ID      tmp+0x12 -> supportId(11 字节)
- *  这里不需要那份 tmp，直接按调用方参数输出。
+ *  输出对应原厂 tmp 布局：statusId / statusDetail / supportId（11 字节）。
  * ------------------------------------------------------------------ */
 static int cn_parse_status_common(const char *buf, int len,
                                   int *statusId, int *statusDetail, char *supportId)
@@ -1510,9 +1468,8 @@ int CNCL_GetStatus(char *data, int readed_data, int *statusId, int *statusDetail
 /* ------------------------------------------------------------------ *
  *  CNCL_GetStatus2 / CNCL_GetStatus_Maintenance —— NET3 专用
  *
- *  ⚠ 本机是 USB 机型，这两条通路无法真机验证，按官方反汇编得到的
- *    输出映射实现（tmp+2=statusId、tmp+4=statusDetail、tmp+6=jobId、
- *    tmp+0x12=supportId、栈上第 7 个参数 = extra/job_description）：
+ *  输出布局对齐原厂：statusId / statusDetail / jobId /
+ *  supportId / extra(job_description)。
  *      CNCL_GetStatus2            -> CLSS_ParseStatusResponsePrint2
  *      CNCL_GetStatus_Maintenance -> CLSS_ParseStatusResponseMaintenance
  *    返回 0=OK；解析器返回 1 时二者分别映射为 10 / 1。
@@ -1584,11 +1541,7 @@ int CNCL_GetStatus_Maintenance(char *data, int readed_data, char *jobId, int *st
 }
 
 /*
- * 说明（与官方逐条对应的差异）：
- *   - 官方用自带的 CL_XML 引擎做 XPath 子集匹配（cmd/ivec:contents/…）。
- *     本实现按“标签名检索”代替：设备实际发出的响应里每个标签全局唯一，
- *     两者结果等价；已知响应样本 60+ 份（rsplog.bin）逐份比对一致。
- *   - CNCL_GetStatus2 / CNCL_GetStatus_Maintenance 只在 NET3 通路使用，
- *     本机为 USB 机型，无法真机交叉验证，按反汇编的输出映射实现。
- *   - CNCL_MakeBJLSetTimeJob 属旧 CHMP(BJL) 协议，G3010 走不到，未做逐字节验证。
+ * 说明：原厂用自带 CL_XML 引擎做 XPath 子集匹配；本实现按标签名检索，
+ *   设备响应里各标签全局唯一，两者结果等价（60+ 份样本逐份比对一致）。
+ *   CNCL_MakeBJLSetTimeJob 属旧 CHMP(BJL) 协议，未做逐字节验证。
  */

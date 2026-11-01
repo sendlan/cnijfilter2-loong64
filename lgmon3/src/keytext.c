@@ -322,11 +322,29 @@ short LoadKeyTextList( void )
 	KeyTextList* list;
 	char* pathname = NULL;
 	short  result = -1;
+	/* PACKAGE_DATA_DIR 可能是未展开的 autoconf 占位（本树 config.h 里就是
+	 * 字面量 "${datarootdir}/cnijlgmon3"），各发行版的 prefix 也不一样。
+	 * 只认一个硬编码目录会让整条打印链路在 LoadKeyTextList 处静默退出
+	 * （err 仍为 0，后端"成功"返回却不发数据），故按候选目录依次查找。 */
+	static const char* cand_dirs[] = {
+		"/usr/share/cnijlgmon3",
+		"/usr/local/share/cnijlgmon3",
+		"/usr/share/cnijlgmon2",
+		"/usr/lib/cnijlgmon3",
+		"keytext",
+		NULL
+	};
+	int i;
 
 	if( !g_keytext_dir  ) goto Err1; 
 
 	if( (pathname = CheckFileExists(g_keytext_dir, CNIJLGMON2_RESFILE)) == NULL ){
-		if( (pathname = CheckFileExists("keytext", CNIJLGMON2_RESFILE)) == NULL )  goto Err1;
+		for( i = 0 ; cand_dirs[i] != NULL ; i++ ){
+			if( (pathname = CheckFileExists(cand_dirs[i], CNIJLGMON2_RESFILE)) != NULL ){
+				break;
+			}
+		}
+		if( pathname == NULL ) goto Err1;
 	}
 
 	if ( (list = (KeyTextList*)malloc(sizeof(KeyTextList))) == NULL ) goto Err1;

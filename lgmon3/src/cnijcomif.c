@@ -201,7 +201,15 @@ int CNIF_GetSerialNum(CNIF_INFO *_if_info, uint8_t *buffer, size_t bufferSize, c
 	memset(value, 0, 32);
 	strncpy(dev_uri, (const char *)buffer, CN_DEVICE_URI_LEN);
 	
-	sscanf(dev_uri, "cnijbe2://Canon/?%63s", head);
+	/* scheme 兼容 cnijbe:// 与 cnijbe2:// ——
+	 * 枚举出的设备 URI 用全字母 scheme（KDE print-manager 的
+	 * [a-z]+:// 正则才认），历史队列仍是 cnijbe2://，两者都要解析。 */
+	{
+		const char *p = strstr(dev_uri, "://Canon/?");
+		if(p != NULL){
+			sscanf(p + sizeof("://Canon/?") - 1, "%63s", head);
+		}
+	}
 	
 	tp = strtok(head, "&");
 	if(tp != NULL) {

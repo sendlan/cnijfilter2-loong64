@@ -1,5 +1,5 @@
 Package: cnijfilter2
-Version: 6.90-6loong64
+Version: 6.90-14loong64
 Architecture: all
 Maintainer: sendlan <sendlan@outlook.com>
 Depends: cups, libcups2t64 | libcups2, libcupsimage2t64 | libcupsimage2, libc6 (>= 2.17), libgcc-s1, libusb-1.0-0

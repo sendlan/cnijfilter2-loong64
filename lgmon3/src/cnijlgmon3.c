@@ -38,6 +38,10 @@
 
 #include "cnclcmdutils.h"
 #include "./common/libcnnet3_type.h"
+
+/* 等打印机回到可打印状态的上限（秒）。打印机残留半截作业时会长期停在
+ * processing，没有上限就会让 CUPS 队列永久挂死。 */
+#define CN_WAIT_READY_SEC 300
 #include "cnijifnet2.h"
 
 int (*CNCL_GetString)(const char*, const char*, int, uint8_t**);
@@ -377,10 +381,20 @@ int (*GET_PROTOCOL)(char *, size_t);
 	}
 
 	/*---------------check printer status----------------------*/
+	/* 打印机若残留一个「已进纸但没收到完整数据」的作业，会长期停在
+	 * processing，本循环会永远等下去，CUPS 队列就再也发不出东西。
+	 * 加个上限：等不到空闲就明确失败，交给 CUPS 重试/告警。 */
+	time_t wait_ready_start = time(NULL);
 	while(1) {
 		/* check intterrupt signal */
 		if(interrupt_sign == 1){
 			fprintf(stderr, "INFO: \n");
+			goto onErr;
+		}
+
+		if (time(NULL) - wait_ready_start > CN_WAIT_READY_SEC) {
+			fprintf(stderr, "INFO: %s\n", LookupText( "LBM_CANT_COMM_PRINT" ));
+			err = CN_LGMON_RESPONSE_ERROR;
 			goto onErr;
 		}
 
@@ -405,6 +419,13 @@ int (*GET_PROTOCOL)(char *, size_t);
 		/* check intterrupt signal */
 		if(interrupt_sign == 1){
 			fprintf(stderr, "INFO: \n");
+			goto onErr;
+		}
+
+		/* 设备一直被别的作业占用时不要无限重试 */
+		if (time(NULL) - wait_ready_start > CN_WAIT_READY_SEC) {
+			fprintf(stderr, "INFO: %s\n", LookupText( "LBM_BUSY" ));
+			err = CN_LGMON_BUSY;
 			goto onErr;
 		}
 
@@ -700,7 +721,9 @@ int (*GET_PROTOCOL)(char *, size_t);
 	goto OK;
 	
 onErr:
-	if(err < 0) {
+	/* 失败必须回非 0：此前 err 在多数早期错误处仍是 0，导致后端"成功"
+	 * 退出、CUPS 把作业标为完成，而实际一个字节都没发到打印机。 */
+	if(err <= 0) {
 		err = 1;
 	}
 	
@@ -926,7 +949,16 @@ int CNIF_GetResponse(CNIF_INFO *if_info, char *job_id, int *response_detail, int
 			fprintf(stderr, "%s\n", tmpBuffer_big);
 			fprintf(stderr, "read_size = %d, err = %d\n", (int)read_size, err);
 #endif
-			cmdBuffer_big = strncat(cmdBuffer_big, tmpBuffer_big, CN_READ_SIZE_BIG);
+			/* 按剩余空间拼接。原先固定传 CN_READ_SIZE_BIG，
+			 * 只要有第二次续读就会写穿 cmdBuffer_big 末尾（堆破坏）。 */
+			{
+				size_t used = strlen(cmdBuffer_big);
+				size_t room = (used + 1 < CN_READ_SIZE_BIG)
+				              ? (CN_READ_SIZE_BIG - 1 - used) : 0;
+				if (room > 0) {
+					strncat(cmdBuffer_big, tmpBuffer_big, room);
+				}
+			}
 			sumsize += read_size;
 
 			if (err == 0) {
@@ -949,9 +981,16 @@ int CNIF_GetResponse(CNIF_INFO *if_info, char *job_id, int *response_detail, int
 
 		char *serviceType = getenv("CONTENT_TYPE");
 		char typePtnMaintenance[100];
+
+		/* CUPS 下 cupsd 会注入 CONTENT_TYPE，但直接执行（排障、其它入口）
+		 * 时可能为空 —— 不判空就是 strncmp(NULL, ...) 段错误。 */
+		if( serviceType == NULL ){
+			serviceType = "";
+		}
+
 		memset( typePtnMaintenance, '\0', sizeof(typePtnMaintenance) );
 
-		strncpy( typePtnMaintenance, SVC_MAINTENANCE, strlen(SVC_MAINTENANCE) );
+		strncpy( typePtnMaintenance, SVC_MAINTENANCE, sizeof(typePtnMaintenance) - 1 );
 
 		if( strncmp( serviceType, typePtnMaintenance, sizeof(typePtnMaintenance) )  == 0 &&
             isMaintenance == CNNET3_TRUE ){
@@ -984,7 +1023,9 @@ int CNIF_GetResponse(CNIF_INFO *if_info, char *job_id, int *response_detail, int
   //           goto onErr;
 		// }
 
-		if( supportID != '\0' ) {
+		/* supportID 是已分配的缓冲区，指针恒非 NULL；
+		 * 判的是内容是否为空（无 support code 时不该输出空括号）。 */
+		if( supportID[0] != '\0' ) {
 			//snprintf(stat_msg, CN_STAT_MSG_LEN - 1, "[support id: %s.] ", supportID);
 			snprintf(stat_tmp_msg, CN_STAT_MSG_LEN - 1, "[%s] ", LookupText("LBM_ERROR_CODE"));
 			snprintf(stat_msg, CN_STAT_MSG_LEN - 1, stat_tmp_msg, supportID);

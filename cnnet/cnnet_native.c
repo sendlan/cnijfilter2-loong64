@@ -1,27 +1,15 @@
 /*
- *  cnnet_native.c —— Canon 网络通信层的 loong64 原生替代实现
+ *  cnnet_native.c —— Canon 网络通信层的 loong64 原生实现
  *
- *  替代三个闭源库（原库仅在 /opt/canonij2 下）：
- *    libcnnet2.so     -> CNNL_*    （旧通信接口，cnijifnet.c 用）
- *    libcnbpnet30.so  -> CNNET3_*  （新传输层，cnijifnet2.c 用）
- *    libcnbpnet20.so  -> CNNET2_*  （SNMP 发现，cnijifnet2.c dlopen）
+ *  一份源码编三份库，行为对齐原厂：
+ *    libcnnet2.so / libcnbpnet30.so / libcnbpnet20.so（符号前缀见 .map）
  *
- *  设计取舍（诚实标注）：
- *    * CNNET3_* / CNNL_* 的**传输**部分按 IVEC over TCP(9100) / CHMP over
- *      HTTP 实现，两条协议均已在真机 G3010 上端到端验证：
- *        - 打印数据  : TCP 9100 RAW（直接灌 rastertocanonij 输出 → 打印机出纸）
- *        - 状态/控制 : CHMP = POST 提交 + GET 取响应（transfer-encoding: chunked）
- *      协议细节来自官方 cnijlgmon3 的真机抓包（抓包材料属一次性证据，不随仓库分发）。
- *    * CNNET2_* 的**发现**部分用 SNMP v1（community canon_admin + Canon 私有
- *      OID，企业号 1602）**单播扫描**实现 —— 不发广播，因为本机 firewalld 的
- *      conntrack 会把广播回包判成 NEW 并回 ICMP admin prohibited。
- *      真机实测：192.168.1.84 / MAC 6C3C7CA051CB / serial YCAA29779 / conn 5。
- *    * 所有函数在参数非法/未连接时返回错误码而非崩溃，保证 lgmon3 稳定。
+ *    CNNL_* / CNNET3_* : 打印数据走 IVEC over TCP 9100，
+ *                        状态/控制走 CHMP（POST 提交 + GET 取 chunked 响应）。
+ *    CNNET2_*          : SNMP v1（community canon_admin，企业号 1602）单播发现；
+ *                        不发广播 —— conntrack 会把开网段广播的回包判成 NEW 拒收。
  *
- *  编译（三份，SONAME 各自正确）：
- *    gcc -O2 -fPIC -shared -o libcnnet2.so.1.2.5     cnnet_native.c -Wl,-soname,libcnnet2.so
- *    gcc -O2 -fPIC -shared -o libcnbpnet30.so.1.0.0  cnnet_native.c -Wl,-soname,libcnbpnet30.so
- *    gcc -O2 -fPIC -shared -o libcnbpnet20.so.1.0.0  cnnet_native.c -Wl,-soname,libcnbpnet20.so
+ *  所有函数在参数非法/未连接时返回错误码而不是崩溃。
  */
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -98,9 +86,12 @@
 #define DEFAULT_TMO_MS  3000
 #define PORT_RAW        9100
 #define PORT_HTTP       80
-/* CHMP 的 X-CHMP-Timeout 取值。官方 cnijlgmon3 实发就是 20，
- * 照抄（改成 10000 这种大值反而会被打印机判 409 Conflict）。 */
+/* X-CHMP-Timeout 固定 20（大值会被打印机判 409 Conflict） */
 #define CN_CHMP_POST_TIMEOUT 20
+/* CHMP 应答读取超时：打印机忙（正在出纸）时 ack 会拖到 3s 以上，
+ * 3s 的 DEFAULT_TMO_MS 会误判成 -12（读超时）导致作业中断。
+ * 必须小于上面声明的 X-CHMP-Timeout 语义窗口。 */
+#define CN_CHMP_READ_TMO_MS 12000
 
 /* ================================================================== */
 /*  公共工具                                                          */
@@ -254,11 +245,8 @@ typedef struct {
 /* ------------------------------------------------------------------ *
  *  CHMP over HTTP 的读写原语
  *
- *  协议实测（官方 cnijlgmon3 真机报文）：
- *    1) POST <url>  —— 提交命令，打印机只回一个不含 body 的 "200 OK" ack
- *    2) GET  <url>  —— 同一 TCP 连接上取回真正的响应，body 是
- *                      Transfer-Encoding: chunked
- *  只 POST 不 GET 的话永远读不到内容（旧实现就卡在这里，返回 err=1）。
+ *  两回合：POST 提交命令（回 200 空 ack）→ 同一连接 GET 取响应
+ *  （chunked 正文）。只 POST 不 GET 永远读不到内容。
  * ------------------------------------------------------------------ */
 
 /* --- 用户态读缓冲：CHMP 的头和 body 必须从同一个缓冲里顺序消费 ----- */
@@ -447,6 +435,31 @@ static long cn_http_read_body(cnnet3_t *h, const char *hdr,
     return 0;
 }
 
+/* CHMP 读取包装：临时放宽读超时。
+ * 打印机在出纸/忙时，POST 的 ack 头可能拖到 3s 以上才补齐（实测 1.8s，
+ * 忙碌时更久），用 DEFAULT_TMO_MS 会把正常应答误判成 -12 读超时，
+ * 直接让作业中断。读完立即还原，不影响 connect/写超时。 */
+static int chmp_read_hdr(cnnet3_t *h, char *hdr, size_t cap, size_t *hdrLen)
+{
+    int sv = h->tmo_ms;
+    int rc;
+    if (sv < CN_CHMP_READ_TMO_MS) h->tmo_ms = CN_CHMP_READ_TMO_MS;
+    rc = cn_http_read_hdr(h, hdr, cap, hdrLen);
+    h->tmo_ms = sv;
+    return rc;
+}
+
+static long chmp_read_body(cnnet3_t *h, const char *hdr,
+                           unsigned char *body, size_t cap)
+{
+    int sv = h->tmo_ms;
+    long n;
+    if (sv < CN_CHMP_READ_TMO_MS) h->tmo_ms = CN_CHMP_READ_TMO_MS;
+    n = cn_http_read_body(h, hdr, body, cap);
+    h->tmo_ms = sv;
+    return n;
+}
+
 
 void *CNNET3_Open(void)
 {
@@ -577,20 +590,10 @@ int CNNET3_Send(void *handle, unsigned char *sendBuffer,
     if (cnnet3_ensure_conn(h) != 0)   return CNNET3_ERR_FAILED_TO_CONNECT;
 
     if (h->iftype == CNNET3_IFTYPE_HTTP) {
-        /* CHMP = Canon HTTP Management Protocol。
-         * 头部字段与顺序照官方 cnijlgmon3 的真实报文逐字节还原
-         * （同一个 TCP 连接上两回合）：
-         *
-         *   回合 1  POST <url>   ← 提交命令
-         *           ack: "HTTP/1.1 200 OK" + 3 个头，**没有 body**
-         *   回合 2  GET  <url>   ← 取响应
-         *           body: Transfer-Encoding: chunked，里面才是真 XML
-         *
-         * POST 头的原样顺序：
-         *   Content-Length / X-CHMP-Timeout: 20 / Connection: Keep-Alive /
-         *   Content-Type: application/octet-stream / Host / X-CHMP-Version: 1.0.0
-         * 注意：官方 body 里**不带 jobID**（param_set 是空的）。
-         * X-CHMP-Version 是硬性要求，写成别的值打印机会静默丢包。 */
+        /* CHMP：一个 TCP 连接、两回合。
+         *  1) POST <url> 提交命令 —— 回 200 空 ack；
+         *  2) GET  <url> 取响应 —— chunked 正文里才是 XML。
+         * X-CHMP-Version: 1.0.0 是硬性要求，写别的值打印机静默丢包。 */
         char head[512];
         int hl = snprintf(head, sizeof(head),
                           "POST %s HTTP/1.1\r\n"
@@ -663,13 +666,13 @@ int CNNET3_Read(void *handle, unsigned char *recvBuffer,
 
         /* --- 回合 1：收掉 POST 的 "200 OK" 空 ack ------------------- */
         if (!h->http_ack_done) {
-            rc = cn_http_read_hdr(h, hdr, sizeof(hdr), &hlen);
+            rc = chmp_read_hdr(h, hdr, sizeof(hdr), &hlen);
             if (rc == -2) return CNNET3_ERR_READING_TIMEOUT;
             if (rc != 0)  return CNNET3_ERR_CONNECTION_ABORTED;
             if (h->http_verbose)
                 fprintf(stderr, "CHMP: [ack] %.*s", (int)(hlen > 64 ? 64 : hlen), hdr);
             /* ack 按协议没有 body；万一有也吃掉，别污染下一次解析 */
-            bl = cn_http_read_body(h, hdr, recvBuffer, cap);
+            bl = chmp_read_body(h, hdr, recvBuffer, cap);
             if (bl < 0) return CNNET3_ERR_CONNECTION_ABORTED;
             {
                 int code = cn_http_status(hdr);
@@ -699,7 +702,7 @@ int CNNET3_Read(void *handle, unsigned char *recvBuffer,
             h->http_get_sent = 1;
         }
 
-        rc = cn_http_read_hdr(h, hdr, sizeof(hdr), &hlen);
+        rc = chmp_read_hdr(h, hdr, sizeof(hdr), &hlen);
         if (rc == -2) return CNNET3_ERR_READING_TIMEOUT;
         if (rc != 0)  return CNNET3_ERR_CONNECTION_ABORTED;
         {
@@ -714,7 +717,7 @@ int CNNET3_Read(void *handle, unsigned char *recvBuffer,
             }
         }
 
-        bl = cn_http_read_body(h, hdr, recvBuffer, cap);
+        bl = chmp_read_body(h, hdr, recvBuffer, cap);
         if (bl < 0) return CNNET3_ERR_CONNECTION_ABORTED;
         *bufferSize = (unsigned long)bl;
         if (h->http_verbose && bl > 0)
@@ -1053,18 +1056,9 @@ int cn_snmp_broadcast(char ipList[][64], int max, int tmo_ms)
 }
 
 /* ================================================================== */
-/*  Canon SNMP 设备发现（单播优先）                                     */
-/*                                                                    */
-/*  官方发现走 SNMP 广播（255.255.255.255:161，community "canon_admin"，*/
-/*  查 5 个 Canon 私有 OID）。广播在启用 conntrack 的防火墙上会失效：  */
-/*  出包目的地址是广播地址，打印机单播回包时源地址不匹配 conntrack 元组 */
-/*  → 被判为 NEW → REJECT。本机 firewalld 实测如此（抓包可见打印机已  */
-/*  回 GetResponse，紧接着本机发 ICMP admin-prohibited）。             */
-/*                                                                    */
-/*  故改为**单播扫描**：候选 = ARP 表已知主机 + 本机 /24 网段全部地址。 */
-/*  单播的 conntrack 元组精确，回包正常匹配，防火墙不再拦。            */
-/*                                                                    */
-/*  OID（IANA 企业号 1602 = Canon），取自真机抓包实测：                 */
+/*  Canon SNMP 设备发现（单播遍历，候选 = ARP 已知邻居 + 本机 /24）      */
+/*  广播回包会被 conntrack 判成 NEW 拒收，故主路径不走广播。            */
+/*  OID（IANA 企业号 1602 = Canon）：                                   */
 /*    1.3.6.1.4.1.1602.1.3.1.13.0       MAC（6 字节二进制）           */
 /*    1.3.6.1.4.1.1602.1.2.1.8.1.3.1.1  序列号（ASCII）               */
 /*    1.3.6.1.4.1.1602.1.1.1.1.0        型号（ASCII）                 */
@@ -1456,17 +1450,11 @@ int CNNL_SearchPrinters(void *nic, const char *cachefile,
                                  mode, retry, timeout);
 }
 
-/* ================================================================== */
-/*  CNNET2_*  —— SNMP 发现（dlopen 自 libcnbpnet20.so）                */
-/*                                                                     */
-/*  诚实说明：Canon 原库走 SNMP + 私有 deviceId 编码                   */
-/*  （形如 "MFG:Canon;MDL:...;DES:...;"）。本机 G3010 为 USB 连接，    */
-/*  网络发现无法真机验证，故此处为「尽力实现」：                       */
-/*    * 广播 SNMP v1 GetRequest（标准 MIB-II) 收集响应者 IP            */
-/*    * 按 IP 反查 Linux ARP 表补 MAC                                  */
-/*    * deviceId_ 以可解析的形式填充，CNCL_GetProtocol 可据此判 IVEC    */
-/*  返回码/结构布局严格正确，任何异常都返回错误码而非崩溃。             */
-/* ================================================================== */
+/* ==================================================================
+ *  CNNET2_*  —— SNMP 发现
+ *  SNMP + 私有 deviceId（"MFG:Canon;MDL:...;DES:...;"），
+ *  CNCL_GetProtocol 据 deviceId 里的 "IVEC" 判定。
+ * ================================================================== */
 
 /* 按 IP 反查 ARP 表补 MAC（输出 "xx-xx-xx-xx-xx-xx"） */
 int cn_arp_lookup_by_ip(const char *ip, char *macOut, size_t cap)
@@ -1593,12 +1581,8 @@ int CNNET2_Search(void *instance, const char *ipv4Address,
         snprintf(e->MacAddressStr_, sizeof(e->MacAddressStr_), "%s", d->mac);
         snprintf(e->serialNumberStr_, sizeof(e->serialNumberStr_), "%s", d->serial);
         snprintf(e->modelName_, sizeof(e->modelName_), "%s", mdl);
-        /* deviceId_：上层 CNCL_GetProtocol() 从其中找 "IVEC" 来判定走 IVEC 协议。
-         * 真机完整 Device ID（IPP get-printer-attributes 实测）为
-         *   MFG:Canon;CMD:BJRaster3,NCCe,IVEC;SOJ:CHMP;MDL:G3010 series;
-         *   CLS:PRINTER;DES:Canon G3010 series;VER:2.000;...
-         * 这里按 SNMP 得到的型号重建同样的语义串；DES 字段供上层
-         * （cnijifnet2.c 的型号兜底解析）提取显示名。 */
+        /* deviceId_: 上层 CNCL_GetProtocol() 从其中找 "IVEC" 判协议；
+         * DES 字段供上层提取显示名。 */
         snprintf(e->deviceId_, sizeof(e->deviceId_),
                  "MFG:Canon;CMD:BJRaster3,NCCe,IVEC;SOJ:CHMP;MDL:%s;"
                  "CLS:PRINTER;DES:Canon %s;", mdl, mdl);

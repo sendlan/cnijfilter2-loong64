@@ -2,9 +2,8 @@
 
 [中文](README.md) · **English**
 
-A native LoongArch rebuild of Canon's `cnijfilter2`. The repository contains no
-non-LoongArch executables, needs no emulation layer at runtime, and refers to no
-directory outside itself.
+A native LoongArch rebuild of Canon's `cnijfilter2`: every ELF is built for this
+architecture, no emulation layer involved.
 
 | | |
 |---|---|
@@ -18,9 +17,8 @@ The **7 factory modules** (`lgmon3` `tocanonij` `tocnpwg` `cnijbe2`
 `rastertocanonij` `cmdtocanonij2` `cmdtocanonij3`) are built from upstream source;
 all porting changes are in `build/patches/loong64-native.patch`.
 
-The **4 closed-source libraries are reimplemented from scratch** (Canon ships
-binaries only): `libcnnet2` `libcnbpnet20` `libcnbpnet30` `libcnbpcnclapicom2` —
-see `cncl/` and `cnnet/`.
+**4 libraries are native implementations**: `libcnnet2` `libcnbpnet20`
+`libcnbpnet30` `libcnbpcnclapicom2` — see `cncl/` and `cnnet/`.
 
 ---
 
@@ -37,15 +35,9 @@ bash build/make-deb.sh                                     # → packages/ (a si
 echo <password> | sudo -S -p '' -E apt install --yes ./packages/*.deb
 ```
 
-**One package covers both architecture names.** `loong64` (Debian / Loongnix /
-deepin) and `loongarch64` (AOSC) denote the very same set of LoongArch 64-bit
-binaries; only the dpkg `Architecture:` field differs. So this repository emits a
-single `Architecture: all` package that installs on both, instead of recompiling
-for each name. A `preinst` guard rejects non-LoongArch hosts before
-dpkg unpacks anything.
-
-If you really need per-arch packages (some archives demand a real arch name),
-one build can emit several:
+The `Architecture: all` package covers both arch names: `loong64`
+(Debian/Loongnix) and `loongarch64` (AOSC) are the same binaries, differing only
+in the dpkg field; `preinst` rejects non-LoongArch hosts. For per-arch packages:
 
 ```bash
 ARCHS="loong64 loongarch64" bash build/make-deb.sh   # two per-arch packages
@@ -68,34 +60,12 @@ Package only (`build/built/` is already a snapshot): `bash build/make-deb.sh`
 bash tests/check-native-only.sh                # delivery-surface self-proof
 ```
 
-**Invariants** (`invariants.py`): properties that can be judged true or false
-without any external reference — determinism, validity, arguments actually taking
-effect, coverage. It still passes with `tests/sweep/` deleted.
-
-**Baseline** (`tests/sweep/baseline*.tsv`): output fingerprints of the official
-upstream implementation (normalized length + first 16 hex digits of SHA-256), read
-on every regression run. Tracked in git and shipped with the repository.
-
-**The reference can be produced on pure loong64** — no emulator, no official
-binaries:
-
-```bash
-/usr/bin/python3 tests/sweep/selfref.py --outdir ~/refl --emit-refdir ~/ref
-/usr/bin/python3 tests/sweep/relock.py --refdir ~/ref --reason "why the baseline must change"
-```
-
-It builds `rastertocanonij` / `tocnpwg` / `cmdtocanonij3` from the upstream source
-in this repository with native gcc and runs the full reference set. Justification:
-`rastertocanonij/README` states it emits the Canon command stream, `tocnpwg/README`
-states it depends on `libcups` only, and `cmdtocanonij3/LICENSE` carries the GPL
-exception permitting linkage against binary modules. Measured, its locked results
-are **byte-identical** to a reference taken from the officially released binaries.
-
-**Three locks** (`baseline_guard.py`) keep the baseline from being silently
-rewritten: the `integrity` field at the end of each table checks itself, a
-`BASELINE_DIGEST` inside the scripts cross-verifies, and `BASELINE-LOG.md` keeps an
-append-only fingerprint chain. Any failing layer aborts immediately. Changing the
-baseline always leaves an explicit diff in 3 files, visible at a glance in review.
+- `invariants.py` (invariants): zero reference, self-contained criteria.
+- `sweep/baseline*.tsv` (baseline): output fingerprints matched against the
+  official implementation, shipped with the repository.
+- After changing sources, rebuild the baseline: `selfref.py` builds reference
+  executables natively, `relock.py` locks them in (see BUILD.md).
+- `baseline_guard.py` keeps the baseline from being silently rewritten.
 
 ---
 
@@ -105,7 +75,7 @@ baseline always leaves an explicit diff in 3 files, visible at a glance in revie
 cnijfilter2/
 ├── build/                        build and packaging
 │   ├── build-all.sh / build-one.sh / make-deb.sh
-│   ├── verify-net-print.sh       packet-capture check of the network print path (root + online printer)
+│   ├── verify-net-print.sh       online check of the network print path (root + online printer)
 │   ├── test-postinst-layout.sh   postinst layout-branch self-test (needs sudo)
 │   ├── docs/BUILD.md             ★ build guide
 │   ├── patches/loong64-native.patch   every change against factory 6.90-1
@@ -139,13 +109,9 @@ cnijfilter2/
 
 ## Source and resource versions
 
-**Source is the full 6.90-1**, same version as the PPDs. All 7 factory modules come
-from `cnijfilter2-source-6.90-1.tar.gz` with only the 8 porting changes in
-`build/patches/loong64-native.patch` applied (8 files, +132/-21 lines).
-
-The 179 PPDs are likewise the complete 6.90 set. `*%CNSizeToPrintArea` and
-`*ImageableArea` are self-contained in each PPD (179/179), with nothing to add
-from outside.
+Source is the full official 6.90-1 (same version as the PPDs, 179 PPDs complete),
+with only the 8 porting changes from `build/patches/loong64-native.patch`;
+printable areas are self-contained per PPD.
 
 ---
 
@@ -174,13 +140,9 @@ soname split (`.so.2` / `.so.16`) is handled with dual dlopen probing.
 
 ## License and self-audit
 
-**All source is under GPL-2 and may be redistributed freely.** The root
-[`LICENSE`](LICENSE) is the full GPL-2.0 text (byte-identical to the gnu.org
-original). Upstream source is GPL-2 (each of the 7 factory modules ships the full
-`COPYING`; `lgmon3/` and `cnijbe2/` also carry Canon's `LICENSE.canon.txt`); each
-of the 179 PPDs under `ppd/` declares the GPL-2 in its own header; our new and
-modified code is GPL-2.0-or-later. See [`NOTICE.md`](NOTICE.md) for the layer
-breakdown and the audit commands.
+All source is under GPL-2: the root [`LICENSE`](LICENSE) is the full GPL-2.0 text,
+upstream modules ship their `COPYING`, each PPD declares GPL-2 in its header, and
+our new/modified code is GPL-2.0-or-later. Layer breakdown: [`NOTICE.md`](NOTICE.md).
 
 The only executables in this repository are LoongArch artifacts built from this
 repository's own source. To verify (expect `LoongArch` and nothing else):

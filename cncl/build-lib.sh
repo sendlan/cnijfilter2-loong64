@@ -3,8 +3,7 @@
 #  build-lib.sh —— 构建 Canon IVEC 命令层的 loong64 原生库
 #                  libcnbpcnclapicom2.so.5.0.0
 #
-#  源码 cncl_native.c 是闭源 libcnbpcnclapicom2 的替代实现，
-#  契约来源与合规说明见该文件头部注释。
+#  源码 cncl_native.c 见其头部注释。
 #
 #  用法:
 #    ./build-lib.sh              # release 构建，产物 → ../build/built/

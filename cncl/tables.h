@@ -1,24 +1,11 @@
 /*
- *  tables.h —— 6.20 源码枚举 ID  ->  IVEC 协议字符串
+ *  tables.h —— 源码枚举 ID -> IVEC 协议字符串
  *
- *  数据来源（可复核）：
- *   字符串：闭源库 /opt/canonij2/usr/lib/libcnbpcnclapicom2.so.5.0.0
- *          .rodata 中的字符串块（纸张 0x1b908 起、介质 0x1bbd2 起）
- *   ID 编号：本源码树 tocanonij/include/cncl/cnclcmdutilsdef.h（6.20 编号）
- *           ——注意 6.90 的编号与此不同，但线上协议只传字符串，故按语义配对即可。
+ *  ID 编号：树内 tocanonij/include/cncl/cnclcmdutilsdef.h（6.20 编号）。
+ *  配对由 rastertocanonij 逐值验证；[推] 的行本机型不可达，为语义推断。
  *
- *  ⚠ 配对结论由“选项扫描实验”实证：用上游官方实现逐值运行
- *     rastertocanonij，读取输出的 <ivec:papersize>/<ivec:papertype>。
- *     该实证脚本与产物属一次性材料，不随仓库分发。标 [实测] 的行为逐值验证过；
- *     标 [推] 的行该机型不可达（PPD 未声明 -> 回退默认值），为语义推断。
- *
- *  ⚠ 闭源库只认“本机型已注册”的纸张/介质 ID，其余一律令
- *     CNCL_GetSetConfigurationCommand 失败。实证：给 PPD 补上 A3/B4/A3+/2L 等
- *     未声明 choice 后再跑上游官方实现，stderr 出现
- *     "Error in CNCL_GetSetConfigurationCommand"，且只吐出 StartJob +
- *     SetJobConfiguration 两条命令就中止。
- *     因此本表对不可达 ID 填 NULL，而 cncl_native.c 在任一字段查表失败时
- *     返回 ERR_GEN —— 与原库行为一致。
+ *  原厂只认"本机型已注册"的纸张/介质 ID，其余一律查表失败。不可达 ID
+ *  填 NULL，cncl_native.c 查表失败返回 ERR_GEN —— 与原厂行为一致。
  */
 #ifndef CNCL_TABLES_H
 #define CNCL_TABLES_H
@@ -42,7 +29,7 @@ static const char *const CNCL_PAPER_TBL[] = {
     "custom_canon_254x304mm",         /* 12 4GIRI(10x12)  [推] */
     NULL,                             /* 13 -- */
     "custom_canon_89x127mm",          /* 14 L             [实测] */
-    NULL,                             /* 15 2L（本机型不可达；闭源库对该 ID 亦拒绝） */
+    NULL,                             /* 15 2L（本机型不可达） */
     "jpn_hagaki_100x148mm",           /* 16 POST / 明信片   [实测 PageSize=Postcard] */
     NULL,                             /* 17 -- */
     "custom_canon_55x91mm",           /* 18 BUSINESSCARD  [实测] */

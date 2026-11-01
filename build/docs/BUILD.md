@@ -2,9 +2,8 @@
 
 从本仓库源码构建 cnijfilter2（loong64）。所有命令在**仓库根**执行。
 
-仓库内 7 个原厂模块 = 官方 `cnijfilter2-source-6.90-1.tar.gz` 原版
-+ `build/patches/loong64-native.patch`（8 个文件、+132/-21 行）。
-换官方源码版本时，patch 需按新基准重生成（`patch -p1` 可直接验证）。
+原厂 7 个模块 = 官方 6.90-1 源码 + `build/patches/loong64-native.patch`。
+换官方源码版本时 patch 需按新基准重生成。
 
 ## 依赖
 
@@ -16,23 +15,10 @@ sudo apt install --yes gcc make autoconf automake libtool pkg-config \
 ## 全量编译
 
 ```bash
-bash build/build-all.sh          # 11 个构件 → build/built/
-bash build/make-deb.sh           # → packages/cnijfilter2_6.90-6_all.deb
+bash build/build-all.sh --deb   # 11 个构件 → build/built/，出包 → packages/*.deb
 ```
 
-一步到位：`bash build/build-all.sh --deb`
-
-`build-all.sh` 顺序：自研库（`cncl/` `cnnet/`）先编 → 原厂 7 个模块逐个走
-autotools → 收集产物到 `build/built/` 并做架构自检。
-
-## 只编一个模块
-
-```bash
-bash build/build-all.sh lgmon3      # 自研库仍会先编一遍
-bash build/make-deb.sh
-```
-
-或绕开 `build-all.sh`：
+## 单模块
 
 ```bash
 bash build/build-one.sh <模块> [configure 参数...]
@@ -40,26 +26,16 @@ bash build/build-one.sh cnijbe2 --prefix=/usr --enable-progpath=/usr/bin
 bash build/build-one.sh lgmon3  LDFLAGS=-L"$PWD/build/built"
 ```
 
-`build-one.sh` 流程：清残留 → `aclocal/libtoolize/autoheader/automake/autoconf`
-→ `configure` → `make -j6`。日志：`build/logs/build-<模块>.log`。
+日志：`build/logs/build-<模块>.log`。
 
 ## 出包
 
-`build/built/` 与 `packages/` **不入库**（见 `.gitignore`），克隆下来是纯源码，
-必须先编一次：
-
 ```bash
-bash build/build-all.sh          # 编 11 个构件 → build/built/
-bash build/make-deb.sh           # 从 build/built/ 组装 → packages/*.deb
+bash build/make-deb.sh                          # 从 build/built/ 组装
+CNIJ_BUILT=/path/to/已有构件 bash build/make-deb.sh   # 只改打包脚本时跳过重编
 ```
 
-只改了打包脚本（`build/make-deb.sh` / `build/pkg/*`）时可跳过重编：
-
-```bash
-CNIJ_BUILT=/path/to/已有构件 bash build/make-deb.sh
-```
-
-加 `--keep` 保留 `build/dist/stage/` 组装树。
+加 `--keep` 保留 `build/dist/stage/`。`build/built/` 与 `packages/` 不入库，克隆后需先编一次。
 
 ## 编译参数
 
@@ -75,49 +51,29 @@ CNIJ_BUILT=/path/to/已有构件 bash build/make-deb.sh
 | `tocanonij` | `--prefix=/usr --enable-progpath=/usr/bin` | `-ldl` |
 | `tocnpwg` | `--prefix=/usr --enable-progpath=/usr/bin` | `-lcups -lcupsimage -lxml2` |
 
-## 构件 ↔ 源码
-
-| `build/built/` | 源码位置 |
-|---|---|
-| `cnijlgmon3` | `lgmon3/src/` |
-| `cnijbe2` | `cnijbe2/src/` |
-| `rastertocanonij` | `rastertocanonij/src/` |
-| `tocanonij` | `tocanonij/src/` |
-| `tocnpwg` | `tocnpwg/src/` |
-| `cmdtocanonij2` `cmdtocanonij3` | `cmdtocanonij{2,3}/filter/` |
-| `libcnbpcnclapicom2.so.5.0.0` | `cncl/cncl_native.c` |
-| `libcnnet2.so.1.2.5` | `cnnet/cnnet_native.c` |
-| `libcnbpnet30.so.1.0.0` | 同上 |
-| `libcnbpnet20.so.1.0.0` | 同上 |
-| `cnnet.ini` | `com/ini/cnnet.ini` |
-
 ## 安装
 
 ```bash
 echo <口令> | sudo -S -p '' -E apt install --yes ./packages/*.deb
 ```
 
-## 版本号与架构名
+## 版本号与架构
 
-`PKGVER` 可覆盖（默认 `6.90-6loong64`），`REV` 由 `sed 's/-*\(loong64\|loongarch64\)$//'`
-推出。**改版本时 `build/pkg/control` 与 `make-deb.sh` 的 `PKGVER` 两处要同步。**
+`PKGVER` 默认 `6.90-6loong64`，可覆盖；改版本时 `build/pkg/control` 与 `make-deb.sh` 两处同步。
 
-`Architecture:` 默认是 **`all`**：`loong64`（Debian/Loongnix）与 `loongarch64`
-（AOSC）是同一套 LoongArch 二进制，出一个包就能两边装，省得反复编译。
-`build/pkg/preinst` 会在解包前做架构自检，非 LoongArch 主机被拒。
-
-要出架构专包（一次构建即可，不重编）：
+`Architecture: all` —— `loong64`（Debian/Loongnix）与 `loongarch64`（AOSC）
+同一套二进制，一个包两边装；`build/pkg/preinst` 在解包前校验非 LoongArch 主机拒绝。
+要架构专包：
 
 ```bash
-ARCHS="loong64 loongarch64" bash build/make-deb.sh   # 两个架构专包
-ARCH=loong64                bash build/make-deb.sh   # 只出 loong64
-DEPS="cups, libcups2, libc6" bash build/make-deb.sh  # 覆盖 Depends（非 Debian 系包名）
+ARCHS="loong64 loongarch64" bash build/make-deb.sh
+ARCH=loong64                bash build/make-deb.sh
+DEPS="cups, libcups2, libc6" bash build/make-deb.sh   # 覆盖 Depends
 ```
 
 ## 验证
 
 ```bash
-bash build/build-all.sh
 /usr/bin/python3 tests/invariants.py           # 31/31
 /usr/bin/python3 tests/sweep/regress.py        # 66/66
 /usr/bin/python3 tests/sweep/mnt-regress.py    # 3/3
@@ -125,17 +81,12 @@ bash build/build-all.sh
 bash tests/check-native-only.sh
 ```
 
-全部返回 0 才算通过。保真回归失败会打印差异并把样本写到 `tests/sweep/regress/`。
-
-### 重算底座（改源码后需要）
+全部返回 0 才算通过。改源码后需重算底座：
 
 ```bash
 /usr/bin/python3 tests/sweep/selfref.py --outdir ~/refl --emit-refdir ~/ref
-/usr/bin/python3 tests/sweep/relock.py --refdir ~/ref --reason "底座为什么要变"
+/usr/bin/python3 tests/sweep/relock.py --refdir ~/ref --reason "理由"
 ```
-
-`relock.py --plan` 列出所需参照文件。写入时同步更新 `integrity` 指纹、
-`BASELINE-LOG.md` 与回归脚本里的 `BASELINE_DIGEST`。
 
 ## 环境参数
 
@@ -143,35 +94,10 @@ bash tests/check-native-only.sh
 |---|---|---|
 | `CNIJ_BUILT` | `<仓库根>/build/built` | 构件目录 |
 | `CNIJ_PPD` | `<仓库根>/ppd/canong3010.ppd` | PPD |
-| `CNIJ_SRC` | `<仓库根>` | 源码树（`mnt-regress.py` 取 `utilfiles/*.utl`） |
-| `CNIJ_WORK` | `<仓库根>` | `build-one.sh` / `make-deb.sh` 的源码树位置 |
+| `CNIJ_SRC` | `<仓库根>` | 源码树 |
+| `CNIJ_WORK` | `<仓库根>` | `build-one.sh` / `make-deb.sh` 的工作源码树 |
 
 ## 排错
 
-**不要在源码树里跑 `./autogen.sh`** —— 它会卡在 libtool 版本检查上。
-`build-one.sh` 已改为手工跑标准序列绕开。
-
-**源码树会被写入中间文件**（就地编译）。要完全不动源码树：
-
-```bash
-git clone . <构建目录>
-export CNIJ_WORK=<构建目录>
-bash build/build-all.sh
-```
-
-**`-lcnnet2` 找不到** —— 自研库没先编：
-
-```bash
-bash cncl/build-lib.sh && bash cnnet/build-net.sh
-```
-
-**沙箱注入了 `BASH_ENV` 垫片**（`rm` 被重定义导致清理变空操作、`configure` 失败）：
-
-```bash
-env -u BASH_ENV -u 'BASH_FUNC_rm%%' -u 'BASH_FUNC_unlink%%' \
-    -u 'BASH_FUNC_rmdir%%' -u <你的沙箱变量> \
-    PATH=/usr/local/bin:/usr/bin:/bin \
-    bash build/build-all.sh
-```
-
-`env | grep -iE 'safe|BASH_ENV'` 可查出变量名。
+- 不要在源码树跑 `./autogen.sh`，走 `build-one.sh`。
+- `-lcnnet2` 找不到：`bash cncl/build-lib.sh && bash cnnet/build-net.sh`。

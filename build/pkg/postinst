@@ -30,7 +30,7 @@ BACKENDDIR=$SRV_CANON/backend
 MODELDIR=/usr/share/cups/model
 
 FILTERS="rastertocanonij cmdtocanonij2 cmdtocanonij3"
-BACKENDS="cnijbe2"
+BACKENDS="cnijbe2 cnijbe"
 
 log() { echo "cnijfilter2: $*"; }
 
@@ -181,6 +181,10 @@ if ! ldconfig -p 2>/dev/null | grep -q 'libcnbpnet30\.so'; then
         log "警告：仍找不到 libcnbpnet30.so，网络/USB 打印可能失败"
     fi
 fi
+
+# 枚举缓存里存的是旧 scheme（cnijbe2://）的设备行，升级后必须清掉，
+# 否则 GUI 会在一小时内继续拿到过期 URI
+rm -f /var/cache/cnijbe2-devices /var/cache/cnijbe2-devices.new
 
 restart_cups
 

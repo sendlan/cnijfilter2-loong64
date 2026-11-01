@@ -18,7 +18,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"            # build/
 PROJ="$(cd "$ROOT/.." && pwd)"                   # 仓库根（= 源码树，已上移不再套娃）
-PKGVER="${PKGVER:-6.90-6loong64}"
+PKGVER="${PKGVER:-6.90-14loong64}"
 REV="$(printf %s "$PKGVER" | sed 's/-*\(loong64\|loongarch64\)$//')"   # 6.90-6loong64 -> 6.90-6
 SRCROOT="${SRCROOT:-${CNIJ_WORK:-$PROJ}}"                # 源码树位置（= 仓库根，源码树已上移）
 PPDROOT="${PPDROOT:-$PROJ/ppd}"                  # 6.90 全量 PPD 就在原厂的 ppd/（GPL-2）
@@ -92,6 +92,23 @@ for f in "$B_LGMON3" "$B_CNIJBE2" "$B_RASTER" "$B_CMDTO2" "$B_CMDTO3" \
 done
 
 # ------------------------------------------------------------------
+# 0b) NEEDED 依赖悬空自检
+#     背景：9-27 构建的 tocnpwg 链接当时的 libxml2.so.2；系统 libxml2 升到
+#     2.15.4 后只提供 so.16，旧构件 NEEDED 悬空 → 运行期加载失败，
+#     rastertocanonij 管道 EPIPE，打印机静默不出纸。
+#     架构自检抓不到这种问题，必须在打包时确认每个 NEEDED 都能解析。
+say "0b) NEEDED 依赖解析自检（防 soname 悬空）"
+for f in "$B_LGMON3" "$B_CNIJBE2" "$B_RASTER" "$B_CMDTO2" "$B_CMDTO3" \
+         "$B_TOCANONIJ" "$B_TOCNPWG" "$B_CLSLIB" \
+         "$B_CNNET2" "$B_CNBP20" "$B_CNBP30"; do
+    # 仅检查本机（打包机）能解析的库；嵌入式/交叉场景需另设 sysroot
+    miss="$(ldd "$f" 2>/dev/null | awk '/not found/{print $1}')"
+    if [ -n "$miss" ]; then
+        die "构件依赖悬空：$f 缺 $(echo $miss | tr '\n' ' ')（请用当前系统库重编该构件）"
+    fi
+done
+
+# ------------------------------------------------------------------
 say "1) 校验资源（PPD 与本地化，全部随仓库分发）"
 # PPD：从源码树的 ppd/ 取（6.90 全量 179 个，已用官方修订版覆盖 6.20 的 112 个
 #      同名文件 —— 同名文件内容被官方改过，混用会导致装入旧描述）。
@@ -131,6 +148,11 @@ fi
 
 # ---- 2b) 原生二进制 ----
 put "$B_CNIJBE2"  /usr/lib/cups/backend/cnijbe2      700
+# CUPS 按 URI scheme 找同名 backend。枚举出的设备 URI 用 cnijbe://
+# （全字母 scheme，KDE print-manager 的 [a-z]+:// 正则才认作网络设备），
+# 这里补一条同名链接指向 cnijbe2；历史队列用的 cnijbe2:// 照旧可用。
+mkdir -p "$STAGE/usr/lib/cups/backend"
+ln -sfn cnijbe2 "$STAGE/usr/lib/cups/backend/cnijbe"
 put "$B_RASTER"   /usr/lib/cups/filter/rastertocanonij 755
 put "$B_CMDTO2"   /usr/lib/cups/filter/cmdtocanonij2   755
 put "$B_CMDTO3"   /usr/lib/cups/filter/cmdtocanonij3   755

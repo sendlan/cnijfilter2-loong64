@@ -64,19 +64,102 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
+#include <sys/stat.h>
 
 #include "cnijbe.h"
 
-#if defined(WIN32) || defined(__EMX__)
-#include <io.h>
-#else
-#include <unistd.h>
-#include <fcntl.h>
-#include <termios.h>
-#endif /* WIN32 || __EMX__ */
+/*
+ * 设备枚举（argc==1）的网络发现：源码级复用 cnnet/cnnet_native.c 的
+ * cn_snmp_discover（SNMP v1 单播扫描，community canon_admin）。
+ * 直接 include 以便 cnijbe2 保持零外部库依赖（DT_NEEDED 仍只有 libc），
+ * 构建时需 -I../lgmon3/src/common（libcnnet2_type.h）。
+ * 发现: 打印 = TCP 9100 由 lgmon3 经 libcnnet2 完成，此处只负责枚举。
+ */
+#include "../../cnnet/cnnet_native.c"
 
 #define CNIJ_LGMON2_PATH	PROG_PATH "/cnijlgmon3"
 // #define _DEBUG_MODE_
+
+/* 列出网内的 Canon 网络打印机，按 CUPS backend 协议输出设备行。
+ * URI 约定与 lgmon3 的解析（cnijcomif.c）严格对齐：
+ *   cnijbe2://Canon/?port=net&serial=<12位大写MAC>
+ * serial 字段承载 MAC —— lgmon3 作业期拿它经 CNNL_GetIPAddressEx
+ * （ARP -> 缓存）定位打印机 IP。 */
+/* 发现结果缓存：GUI（print-manager）发起的 CUPS-Get-Devices 带有较短
+ * 超时，冷扫描（约 4s）会被掐掉导致"添加打印机"里看不到网络设备。
+ * URI 以 MAC 定位设备，打印机换 IP 不失效，故缓存可安全复用。 */
+#define CNIJ_DISCOVER_CACHE	"/var/cache/cnijbe2-devices"
+#define CNIJ_DISCOVER_TMO_MS	3000
+#define CNIJ_CACHE_TTL		3600	/* 秒 */
+
+/* 输出一台设备的 CUPS 设备行（stdout 与缓存文件共用）
+ *
+ * scheme 必须是 cnijbe://（全小写字母）：KDE print-manager 用正则
+ * [a-z]+:// 判断"是否为可发现的网络设备"，带数字的 cnijbe2:// 会被
+ * 归入 Manual 类别而在"添加打印机"默认视图里被过滤掉。
+ * CUPS 按 scheme 找同名 backend，故包内另有 backend/cnijbe -> cnijbe2
+ * 的符号链接；作业期 cnijlgmon3 对两种 scheme 都解析。 */
+static void emit_dev(FILE *out, const cn_canon_dev *d)
+{
+	fprintf(out, "network cnijbe://Canon/?port=net&serial=%s "
+		     "\"Canon %s\" \"Canon %s (network)\" "
+		     "\"MFG:Canon;MDL:%s;CLS:PRINTER;DES:Canon IJ Printer;\"\n",
+	       d->mac, d->model, d->model, d->model);
+}
+
+/* 把缓存文件原样搬到 stdout */
+static void cache_dump(void)
+{
+	FILE *fp = fopen(CNIJ_DISCOVER_CACHE, "r");
+	char buf[512];
+
+	if (!fp)
+		return;
+	while (fgets(buf, sizeof(buf), fp))
+		fputs(buf, stdout);
+	fclose(fp);
+}
+
+static void list_devices(void)
+{
+	cn_canon_dev devs[8];
+	int n, i, j;
+	struct stat st;
+	FILE *fp;
+
+	/* 快速路径：1 小时内扫过 -> 立即输出，枚举零等待 */
+	if (stat(CNIJ_DISCOVER_CACHE, &st) == 0 &&
+	    time(NULL) - st.st_mtime < CNIJ_CACHE_TTL) {
+		cache_dump();
+		return;
+	}
+
+	/* 冷路径：单播 SNMP 扫描（窗口 3s，控制在上层超时内） */
+	n = cn_snmp_discover(devs, 8, CNIJ_DISCOVER_TMO_MS);
+	fp = (n > 0) ? fopen(CNIJ_DISCOVER_CACHE ".new", "w") : NULL;
+	for (i = 0; i < n; i++) {
+		if (devs[i].mac[0] == '\0')
+			continue;
+		/* 多网卡同网段时同一台打印机会被探测两遍，按 MAC 去重 */
+		for (j = 0; j < i; j++) {
+			if (!strcmp(devs[i].mac, devs[j].mac))
+				break;
+		}
+		if (j < i)
+			continue;
+		emit_dev(stdout, &devs[i]);
+		if (fp)
+			emit_dev(fp, &devs[i]);
+	}
+	if (fp) {
+		fclose(fp);
+		rename(CNIJ_DISCOVER_CACHE ".new", CNIJ_DISCOVER_CACHE);
+	} else if (n == 0) {
+		/* 本次没扫到（打印机睡眠/离线）：把旧缓存兜底输出 */
+		cache_dump();
+	}
+}
 
 pid_t pid = -1;
 
@@ -111,7 +194,9 @@ main(int  argc,		/* I - Number of command-line arguments (6 or 7) */
 	* Check command-line...
 	*/
 	if (argc == 1) {
-		//strncpy(discover, "1", sizeof(discover));
+		/* 枚举模式（CUPS cups-deviced 调用）：输出网内 Canon 网络打印机 */
+		list_devices();
+		return (0);
 	} else if (argc < 6 || argc > 7){
 		fputs("ERROR: Illegal argument.\n", stderr);
 		fputs("Usage: cnijbe\n", stderr);
@@ -190,12 +275,7 @@ main(int  argc,		/* I - Number of command-line arguments (6 or 7) */
 #ifdef _DEBUG_MODE_
 		fprintf(stderr, "DEBUG: Write process start--------------\n");
 #endif
-		if (argc == 1) {
-			execl(CNIJ_LGMON2_PATH, "cnijlgmon3", NULL);
-		} else {
-			// execl(CNIJ_LGMON2_PATH, "cnijlgmon3", printer_uri, copies, NULL);
-			execl(CNIJ_LGMON2_PATH, "cnijlgmon3", printer_uri, copies, argv[5], argv[1], NULL);
-		}
+		execl(CNIJ_LGMON2_PATH, "cnijlgmon3", printer_uri, copies, argv[5], argv[1], NULL);
 	}
 	
 	return 0;

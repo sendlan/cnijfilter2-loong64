@@ -7,7 +7,7 @@ bin_PROGRAMS= tocnpwg
 tocnpwg_SOURCES= \
 	main.c mkpset.c
 
-tocnpwg_LDADD= -lcups -lcupsimage -lxml2
+tocnpwg_LDADD= -lcups -lcupsimage
 
 AM_CFLAGS= -O2 -Wall
 

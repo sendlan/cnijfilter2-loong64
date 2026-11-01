@@ -21,6 +21,7 @@
 #include <getopt.h>
 //#include <libxml/encoding.h>
 #include <libxml/xmlwriter.h>
+#include "xmlwrap.h"
 
 
 enum {
@@ -65,6 +66,8 @@ int CreateJobSettings( int argc, char *argv[] , void **pData )
 	};
 
 	if ( (argv == NULL) || (pData == NULL) ) goto onErr1;
+
+	if ( xmlw_init() != 0 ) goto EXIT;   /* dlopen libxml2（任意 soname） */
 
 	buf = xmlBufferCreate();
 	if ( buf == NULL ) {
@@ -176,6 +179,8 @@ int CreatePageSettings( int dataSize, void **pData )
 	xmlBufferPtr buf;
 
 	if ( pData == NULL ) goto onErr1;
+
+	if ( xmlw_init() != 0 ) goto EXIT;   /* dlopen libxml2（任意 soname） */
 
 	buf = xmlBufferCreate();
 	if ( buf == NULL ) {
